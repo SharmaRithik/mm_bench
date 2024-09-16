@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGPU Matrix Multiplication Benchmark</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.1/chart.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        h1 { text-align: center; }
+        #controls { margin-bottom: 20px; }
+        #results { margin-top: 20px; }
+        canvas { max-width: 100%; }
+        .checkbox-group { margin: 10px 0; }
+        .checkbox-group label { margin-right: 10px; }
+    </style>
+</head>
+<body>
+    <h1>WebGPU Matrix Multiplication Benchmark</h1>
+    <div id="controls">
+        <div class="checkbox-group">
+            <label>Matrix Sizes:</label>
+            <input type="checkbox" id="size128" value="128"><label for="size128">128</label>
+            <input type="checkbox" id="size256" value="256"><label for="size256">256</label>
+            <input type="checkbox" id="size512" value="512"><label for="size512">512</label>
+            <input type="checkbox" id="size1024" value="1024"><label for="size1024">1024</label>
+            <button id="allSizes">All Sizes</button>
+        </div>
+        <div class="checkbox-group">
+            <label>Precision:</label>
+            <input type="radio" id="f32" name="precision" value="f32" checked><label for="f32">f32 (32-bit float)</label>
+            <input type="radio" id="f16" name="precision" value="f16"><label for="f16">f16 (16-bit float)</label>
+        </div>
+        <div class="checkbox-group">
+            <label>Implementation:</label>
+            <input type="checkbox" id="naive" value="naive" checked><label for="naive">Naive</label>
+            <input type="checkbox" id="tiled" value="tiled" checked><label for="tiled">Tiled</label>
+            <input type="checkbox" id="vectorized" value="vectorized" checked><label for="vectorized">Vectorized</label>
+            <input type="checkbox" id="sharedMemory" value="sharedMemory" checked><label for="sharedMemory">Shared Memory</label>
+        </div>
+        <button id="runBenchmark">Run Benchmark</button>
+    </div>
+    <div id="results">
+        <canvas id="benchmarkChart"></canvas>
+    </div>
+
+    <script type="module">
+        function getNaiveWGSL(N) {
+            return `
+                @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+                @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+                @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+
+                @compute @workgroup_size(8, 8)
+                fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
+                    let N = ${N}u;
+                    let row = global_id.y;
+                    let col = global_id.x;
+
+                    if (row < N && col < N) {
+                        var sum = 0.0;
+                        for (var i = 0u; i < N; i = i + 1u) {
+                            sum = sum + matrixA[row * N + i] * matrixB[i * N + col];
+                        }
+                        matrixC[row * N + col] = sum;
+                    }
+                }
+            `;
+        }
+
+        function getTiledWGSL(N) {
+            const TILE_SIZE = 16;
+            return `
+                @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+                @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+                @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+
+                var<workgroup> tileA : array<array<f32, ${TILE_SIZE}>, ${TILE_SIZE}>;
+                var<workgroup> tileB : array<array<f32, ${TILE_SIZE}>, ${TILE_SIZE}>;
+
+                @compute @workgroup_size(${TILE_SIZE}, ${TILE_SIZE})
+                fn main(@builtin(global_invocation_id) global_id : vec3<u32>, @builtin(local_invocation_id) local_id : vec3<u32>) {
+                    let N = ${N}u;
+                    let row = global_id.y;
+                    let col = global_id.x;
+                    let localRow = local_id.y;
+                    let localCol = local_id.x;
+
+                    var sum = 0.0;
+                    let numTiles = (N + ${TILE_SIZE - 1}u) / ${TILE_SIZE}u;
+
+                    for (var t = 0u; t < numTiles; t = t + 1u) {
+                        let tileARow = row;
+                        let tileACol = t * ${TILE_SIZE}u + localCol;
+                        if (tileARow < N && tileACol < N) {
+                            tileA[localRow][localCol] = matrixA[tileARow * N + tileACol];
+                        } else {
+                            tileA[localRow][localCol] = 0.0;
+                        }
+
+                        let tileBRow = t * ${TILE_SIZE}u + localRow;
+                        let tileBCol = col;
+                        if (tileBRow < N && tileBCol < N) {
+                            tileB[localRow][localCol] = matrixB[tileBRow * N + tileBCol];
+                        } else {
+                            tileB[localRow][localCol] = 0.0;
+                        }
+
+                        workgroupBarrier();
+
+                        for (var k = 0u; k < ${TILE_SIZE}u; k = k + 1u) {
+                            sum = sum + tileA[localRow][k] * tileB[k][localCol];
+                        }
+
+                        workgroupBarrier();
+                    }
+
+                    if (row < N && col < N) {
+                        matrixC[row * N + col] = sum;
+                    }
+                }
+            `;
+        }
+
+        function getVectorizedWGSL(N) {
+            return `
+                @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+                @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+                @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+
+                @compute @workgroup_size(8, 8)
+                fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
+                    let N = ${N}u;
+                    let row = global_id.y;
+                    let col = global_id.x;
+
+                    if (row < N && col < N) {
+                        var sum = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+                        for (var i = 0u; i < N; i = i + 4u) {
+                            let aRow = vec4<f32>(
+                                matrixA[row * N + i],
+                                matrixA[row * N + i + 1u],
+                                matrixA[row * N + i + 2u],
+                                matrixA[row * N + i + 3u]
+                            );
+                            let bCol = vec4<f32>(
+                                matrixB[i * N + col],
+                                matrixB[(i + 1u) * N + col],
+                                matrixB[(i + 2u) * N + col],
+                                matrixB[(i + 3u) * N + col]
+                            );
+                            sum = sum + aRow * bCol;
+                        }
+                        matrixC[row * N + col] = sum.x + sum.y + sum.z + sum.w;
+                    }
+                }
+            `;
+        }
+
+        function getSharedMemoryWGSL(N) {
+            const TILE_SIZE = 16;
+            return `
+                @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+                @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+                @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+
+                var<workgroup> tileA : array<array<f32, ${TILE_SIZE}>, ${TILE_SIZE}>;
+                var<workgroup> tileB : array<array<f32, ${TILE_SIZE}>, ${TILE_SIZE}>;
+
+                @compute @workgroup_size(${TILE_SIZE}, ${TILE_SIZE})
+                fn main(@builtin(global_invocation_id) global_id : vec3<u32>, @builtin(local_invocation_id) local_id : vec3<u32>) {
+                    let N = ${N}u;
+                    let row = global_id.y;
+                    let col = global_id.x;
+                    let localRow = local_id.y;
+                    let localCol = local_id.x;
+
+                    var sum = 0.0;
+                    let numTiles = (N + ${TILE_SIZE - 1}u) / ${TILE_SIZE}u;
+
+                    for (var t = 0u; t < numTiles; t = t + 1u) {
+                        let tileARow = row;
+                        let tileACol = t * ${TILE_SIZE}u + localCol;
+                        if (tileARow < N && tileACol < N) {
+                            tileA[localRow][localCol] = matrixA[tileARow * N + tileACol];
+                        } else {
+                            tileA[localRow][localCol] = 0.0;
+                        }
+
+                        let tileBRow = t * ${TILE_SIZE}u + localRow;
+                        let tileBCol = col;
+                        if (tileBRow < N && tileBCol < N) {
+                            tileB[localRow][localCol] = matrixB[tileBRow * N + tileBCol];
+                        } else {
+                            tileB[localRow][localCol] = 0.0;
+                        }
+
+                        workgroupBarrier();
+
+                        for (var k = 0u; k < ${TILE_SIZE}u; k = k + 1u) {
+                            sum = sum + tileA[localRow][k] * tileB[k][localCol];
+                        }
+
+                        workgroupBarrier();
+                    }
+
+                    if (row < N && col < N) {
+                        matrixC[row * N + col] = sum;
+                    }
+                }
+            `;
+        }
+
+        async function initializeWebGPU() {
+            if (!navigator.gpu) {
+                throw new Error("WebGPU not supported on this browser.");
+            }
+            const adapter = await navigator.gpu.requestAdapter();
+            if (!adapter) {
+                throw new Error("No appropriate GPUAdapter found.");
+            }
+            return adapter.requestDevice();
+        }
+
+        function createBuffer(device, data, usage) {
+            const buffer = device.createBuffer({
+                size: data.byteLength,
+                usage: usage,
+                mappedAtCreation: true,
+            });
+            new Float32Array(buffer.getMappedRange()).set(data);
+            buffer.unmap();
+            return buffer;
+        }
+
+        async function runBenchmark(device, N, precision, implementation) {
+            let shaderModule;
+            switch (implementation) {
+                case 'naive':
+                    shaderModule = device.createShaderModule({ code: getNaiveWGSL(N) });
+                    break;
+                case 'tiled':
+                    shaderModule = device.createShaderModule({ code: getTiledWGSL(N) });
+                    break;
+                case 'vectorized':
+                    shaderModule = device.createShaderModule({ code: getVectorizedWGSL(N) });
+                    break;
+                case 'sharedMemory':
+                    shaderModule = device.createShaderModule({ code: getSharedMemoryWGSL(N) });
+                    break;
+            }
+
+            const matrixSize = N * N;
+            const matrixA = new Float32Array(matrixSize).fill(1);
+            const matrixB = new Float32Array(matrixSize).fill(1);
+            const resultMatrix = new Float32Array(matrixSize);
+
+            const bufferA = createBuffer(device, matrixA, GPUBufferUsage.STORAGE);
+            const bufferB = createBuffer(device, matrixB, GPUBufferUsage.STORAGE);
+            const bufferC = createBuffer(device, resultMatrix, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
+
+            const bindGroupLayout = device.createBindGroupLayout({
+                entries: [
+                    { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+                    { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+                    { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+                ],
+            });
+
+            const bindGroup = device.createBindGroup({
+                layout: bindGroupLayout,
+                entries: [
+                    { binding: 0, resource: { buffer: bufferA } },
+                    { binding: 1, resource: { buffer: bufferB } },
+                    { binding: 2, resource: { buffer: bufferC } },
+                ],
+            });
+
+            const pipelineLayout = device.createPipelineLayout({
+                bindGroupLayouts: [bindGroupLayout],
+            });
+
+            const computePipeline = device.createComputePipeline({
+                layout: pipelineLayout,
+                compute: {
+                    module: shaderModule,
+                    entryPoint: "main",
+                },
+            });
+
+            const commandEncoder = device.createCommandEncoder();
+            const passEncoder = commandEncoder.beginComputePass();
+            passEncoder.setPipeline(computePipeline);
+            passEncoder.setBindGroup(0, bindGroup);
+            
+            let workgroupSize;
+            switch (implementation) {
+                case 'naive':
+                case 'vectorized':
+                    workgroupSize = 8;
+                    break;
+                case 'tiled':
+                case 'sharedMemory':
+                    workgroupSize = 16;
+                    break;
+            }
+            
+            passEncoder.dispatchWorkgroups(Math.ceil(N / workgroupSize), Math.ceil(N / workgroupSize));
+            passEncoder.end();
+
+            const gpuCommands = commandEncoder.finish();
+
+            const startTime = performance.now();
+            device.queue.submit([gpuCommands]);
+            await device.queue.onSubmittedWorkDone();
+            const endTime = performance.now();
+
+            return endTime - startTime;
+        }
+
+        let benchmarkChart;
+
+        async function performBenchmark() {
+            const device = await initializeWebGPU();
+            const matrixSizes = [128, 256, 512, 1024].filter(size => document.getElementById(`size${size}`).checked);
+            const precision = document.querySelector('input[name="precision"]:checked').value;
+            const implementations = ['naive', 'tiled', 'vectorized', 'sharedMemory'].filter(impl => document.getElementById(impl).checked);
+
+            const results = [];
+
+            for (const size of matrixSizes) {
+                for (const implementation of implementations) {
+                    const time = await runBenchmark(device, size, precision, implementation);
+                    results.push({ size, time, implementation });
+                    console.log(`Matrix size ${size}x${size} (${implementation}): ${time.toFixed(2)} ms`);
+                }
+            }
+
+            updateChart(results);
+        }
+
+        function updateChart(results) {
+            const ctx = document.getElementById("benchmarkChart").getContext("2d");
+
+            if (benchmarkChart) {
+                benchmarkChart.destroy();
+            }
+
+            const implementations = [...new Set(results.map(r => r.implementation))];
+            const datasets = implementations.map((implementation, index) => ({
+                label: implementation.charAt(0).toUpperCase() + implementation.slice(1),
+                data: results.filter(r => r.implementation === implementation).map(r => r.time),
+                backgroundColor: `hsla(${index * 360 / implementations.length}, 70%, 60%, 0.6)`,
+                borderColor: `hsla(${index * 360 / implementations.length}, 70%, 60%, 1)`,
+                borderWidth: 1
+            }));
+
+            benchmarkChart = new Chart(ctx, {
+                type: "bar",
+                data: {
+                    labels: [...new Set(results.map(r => `${r.size}x${r.size}`))],
+                    datasets: datasets
+                },
+                options: {
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: "Time (ms)"
+                            }
+                        },
+                        x: {
+                            title: {
+                                display: true,
+                                text: "Matrix Size"
+                            }
+                        }
+                    },
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: "WebGPU Matrix Multiplication Benchmark"
+                        }
+                    }
+                }
+            });
+        }
+
+        document.getElementById("runBenchmark").addEventListener("click", performBenchmark);
+        document.getElementById("allSizes").addEventListener("click", () => {
+            [128, 256, 512, 1024].forEach(size => {
+                document.getElementById(`size${size}`).checked = true;
+            });
+        });
+    </script>
+</body>
+</html>
