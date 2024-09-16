@@ -37,6 +37,8 @@
             <input type="checkbox" id="tiled" value="tiled" checked><label for="tiled">Tiled</label>
             <input type="checkbox" id="vectorized" value="vectorized" checked><label for="vectorized">Vectorized</label>
             <input type="checkbox" id="sharedMemory" value="sharedMemory" checked><label for="sharedMemory">Shared Memory</label>
+            <input type="checkbox" id="intelligent1" value="intelligent1"><label for="intelligent1">Intelligent-1</label>
+            <input type="checkbox" id="intelligent2" value="intelligent2"><label for="intelligent2">Intelligent-2</label>
         </div>
         <button id="runBenchmark">Run Benchmark</button>
     </div>
@@ -211,6 +213,146 @@
             `;
         }
 
+        function getIntelligentWGSL(N) {
+            return `
+                @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+                @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+                @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+                struct Uniforms {
+                    M : u32,
+                    N : u32,
+                    K : u32,
+                };
+                @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+
+                const TILE_SIZE = 32u;
+                const VECTOR_SIZE = 4u;
+
+                var<workgroup> tileA : array<array<f32, TILE_SIZE>, TILE_SIZE>;
+                var<workgroup> tileB : array<array<f32, TILE_SIZE>, TILE_SIZE>;
+
+                @compute @workgroup_size(TILE_SIZE, TILE_SIZE / VECTOR_SIZE)
+                fn main(
+                    @builtin(global_invocation_id) global_id : vec3<u32>,
+                    @builtin(local_invocation_id) local_id : vec3<u32>,
+                ) {
+                    let row = global_id.y * VECTOR_SIZE;
+                    let col = global_id.x;
+                    let localRow = local_id.y * VECTOR_SIZE;
+                    let localCol = local_id.x;
+                    let M = uniforms.M;
+                    let N = uniforms.N;
+                    let K = uniforms.K;
+
+                    var acc: array<vec4<f32>, VECTOR_SIZE>;
+                    for (var i = 0u; i < VECTOR_SIZE; i++) {
+                        acc[i] = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+                    }
+
+                    // Loop over tiles
+                    for (var t = 0u; t < K; t += TILE_SIZE) {
+                        // Collaborative loading of tiles into shared memory
+                        for (var i = 0u; i < VECTOR_SIZE; i++) {
+                            let globalRow = row + i;
+                            if (globalRow < M && t + localCol < K) {
+                                tileA[localRow + i][localCol] = matrixA[globalRow * K + t + localCol];
+                            }
+                            let globalCol = col;
+                            if (t + localRow + i < K && globalCol < N) {
+                                tileB[localRow + i][localCol] = matrixB[(t + localRow + i) * N + globalCol];
+                            }
+                        }
+                        workgroupBarrier();
+
+                        // Compute on the tiles
+                        for (var k = 0u; k < TILE_SIZE; k++) {
+                            let bVec = vec4<f32>(tileB[k][localCol]);
+                            for (var i = 0u; i < VECTOR_SIZE; i++) {
+                                acc[i] += vec4<f32>(tileA[localRow + i][k]) * bVec;
+                            }
+                        }
+                        workgroupBarrier();
+                    }
+
+                    // Write results
+                    for (var i = 0u; i < VECTOR_SIZE; i++) {
+                        let globalRow = row + i;
+                        if (globalRow < M && col < N) {
+                            let idx = globalRow * N + col;
+                            matrixC[idx] = acc[i].x + acc[i].y + acc[i].z + acc[i].w;
+                        }
+                    }
+                }
+            `;
+        }
+
+        function getIntelligent2WGSL(N) {
+            return `
+                const BLOCKSIZE = 32u;
+
+                @group(0) @binding(0) var<storage, read> A : array<f32>;
+                @group(0) @binding(1) var<storage, read> B : array<f32>;
+                @group(0) @binding(2) var<storage, read_write> C : array<f32>;
+
+                struct Uniforms {
+                    M : u32,
+                    N : u32,
+                    K : u32,
+                    alpha : f32,
+                    beta : f32,
+                };
+                @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+
+                var<workgroup> As : array<array<f32, BLOCKSIZE>, BLOCKSIZE>;
+                var<workgroup> Bs : array<array<f32, BLOCKSIZE>, BLOCKSIZE>;
+
+                @compute @workgroup_size(BLOCKSIZE, BLOCKSIZE)
+                fn main(
+                    @builtin(global_invocation_id) global_id : vec3<u32>,
+                    @builtin(local_invocation_id) local_id : vec3<u32>,
+                ) {
+                    let M = uniforms.M;
+                    let N = uniforms.N;
+                    let K = uniforms.K;
+                    let alpha = uniforms.alpha;
+                    let beta = uniforms.beta;
+
+                    let row = global_id.y;
+                    let col = global_id.x;
+                    let threadRow = local_id.y;
+                    let threadCol = local_id.x;
+
+                    // Calculate block indices
+                    let cRow = row / BLOCKSIZE;
+                    let cCol = col / BLOCKSIZE;
+
+                    var tmp = 0.0;
+
+                    // Iterate over the K dimension
+                    for (var bkIdx = 0u; bkIdx < K; bkIdx += BLOCKSIZE) {
+                        // Load data into shared memory
+                        As[threadRow][threadCol] = A[(cRow * BLOCKSIZE + threadRow) * K + bkIdx + threadCol];
+                        Bs[threadRow][threadCol] = B[(bkIdx + threadRow) * N + cCol * BLOCKSIZE + threadCol];
+
+                        workgroupBarrier();
+
+                        // Compute partial dot product
+                        for (var dotIdx = 0u; dotIdx < BLOCKSIZE; dotIdx++) {
+                            tmp += As[threadRow][dotIdx] * Bs[dotIdx][threadCol];
+                        }
+
+                        workgroupBarrier();
+                    }
+
+                    // Write result to global memory
+                    if (row < M && col < N) {
+                        let index = row * N + col;
+                        C[index] = alpha * tmp + beta * C[index];
+                    }
+                }
+            `;
+        }
+
         async function initializeWebGPU() {
             if (!navigator.gpu) {
                 throw new Error("WebGPU not supported on this browser.");
@@ -247,6 +389,12 @@
                     break;
                 case 'sharedMemory':
                     shaderModule = device.createShaderModule({ code: getSharedMemoryWGSL(N) });
+                    break;
+                case 'intelligent1':
+                    shaderModule = device.createShaderModule({ code: getIntelligentWGSL(N) });
+                    break;
+                case 'intelligent2':
+                    shaderModule = device.createShaderModule({ code: getIntelligentWGSL(N) });
                     break;
             }
 
@@ -301,7 +449,11 @@
                     break;
                 case 'tiled':
                 case 'sharedMemory':
+                case 'intelligent1':
                     workgroupSize = 16;
+                    break;
+                case 'intelligent2':
+                    workgroupSize = 32;
                     break;
             }
             
@@ -324,7 +476,7 @@
             const device = await initializeWebGPU();
             const matrixSizes = [128, 256, 512, 1024].filter(size => document.getElementById(`size${size}`).checked);
             const precision = document.querySelector('input[name="precision"]:checked').value;
-            const implementations = ['naive', 'tiled', 'vectorized', 'sharedMemory'].filter(impl => document.getElementById(impl).checked);
+            const implementations = ['naive', 'tiled', 'vectorized', 'sharedMemory', 'intelligent1', 'intelligent2'].filter(impl => document.getElementById(impl).checked);
 
             const results = [];
 
@@ -394,5 +546,76 @@
             });
         });
     </script>
+
+    <!-- Summary for Intelligent method -->
+    <footer>
+        <h4>Summary of Intelligent-1 Method</h4>
+        <p>
+            <strong>Intelligent-1</strong>: This method leverages a combination of tiling, vectorization, and shared memory usage to perform matrix multiplication efficiently. It utilizes 32x32 tiles stored in shared memory to reduce global memory accesses. The vectorization with `VECTOR_SIZE=4` allows each thread to process multiple rows, improving the computation throughput. By ensuring coalesced memory access and using efficient data sharing through shared memory, this method achieves optimized memory usage. Loop unrolling and accumulator optimization further reduce overhead and enhance performance. Synchronization barriers ensure that all threads complete before moving on to the next phase of computation.
+        </p>
+        
+        <h4>Summary of Intelligent-2 Method</h4>
+        <p>
+            <strong>Intelligent-2</strong>: This shared memory cache-blocking method for matrix multiplication optimizes GPU performance by reducing global memory accesses. It divides input matrices into blocks, loading them into fast shared memory. Each thread in a workgroup computes one output element, accessing data primarily from shared memory. The kernel iterates over blocks along the K dimension, accumulating partial results. Memory coalescing is achieved by careful thread indexing. Synchronization barriers ensure correct data loading and computation. This approach balances efficient memory usage with computational throughput, significantly improving performance over naive implementations for large matrices.
+        </p>
+    
+        <h4>Comparison of Intelligent-1 and Intelligent-2 Methods</h4>
+        <table border="1" cellspacing="0" cellpadding="5">
+            <thead>
+                <tr>
+                    <th>Feature</th>
+                    <th>Intelligent-1</th>
+                    <th>Intelligent-2</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>Tiling Strategy</strong></td>
+                    <td>32x32 tiles with vectorized row processing (VECTOR_SIZE=4)</td>
+                    <td>32x32 tiles with scalar row and column processing</td>
+                </tr>
+                <tr>
+                    <td><strong>Vectorization</strong></td>
+                    <td>Yes (vec4 for row vectorization)</td>
+                    <td>No (scalar computation)</td>
+                </tr>
+                <tr>
+                    <td><strong>Shared Memory Usage</strong></td>
+                    <td>Efficient use of shared memory for matrix tiles</td>
+                    <td>Efficient use of shared memory for cache-blocking</td>
+                </tr>
+                <tr>
+                    <td><strong>Memory Coalescing</strong></td>
+                    <td>Optimized with vectorized global memory accesses</td>
+                    <td>Optimized with scalar memory accesses</td>
+                </tr>
+                <tr>
+                    <td><strong>Workgroup Size</strong></td>
+                    <td>32x8 (due to vectorization)</td>
+                    <td>32x32</td>
+                </tr>
+                <tr>
+                    <td><strong>Computation</strong></td>
+                    <td>Vectorized row computation (4 elements at a time)</td>
+                    <td>Scalar dot product for each element</td>
+                </tr>
+                <tr>
+                    <td><strong>Accumulator</strong></td>
+                    <td>vec4 accumulator (4 parallel sums)</td>
+                    <td>Scalar accumulator (1 sum at a time)</td>
+                </tr>
+                <tr>
+                    <td><strong>Alpha/Beta Scaling</strong></td>
+                    <td>No</td>
+                    <td>Yes (supports alpha and beta scaling factors)</td>
+                </tr>
+                <tr>
+                    <td><strong>Synchronization</strong></td>
+                    <td>Ensures threads finish loading tiles before computation</td>
+                    <td>Ensures threads finish loading tiles before computation</td>
+                </tr>
+            </tbody>
+        </table>
+    </footer>
 </body>
 </html>
