@@ -19,7 +19,9 @@ fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
         }
         matrixC[row * N + col] = sum;
     }
-}```
+}
+
+```
 
 Tiled Implementation:
 Uses tiling to improve memory access patterns. Loads subsets of input matrices into shared memory tiles. Computes partial sums within tiles, reducing global memory accesses. Uses workgroup barriers for synchronization. More efficient than naive for larger matrices.
