@@ -55,7 +55,9 @@ fn main(@builtin(global_invocation_id) global_id : vec3<u32>, @builtin(local_inv
     if (row < N && col < N) {
         matrixC[row * N + col] = sum;
     }
-}```
+}
+
+```
 
 Vectorized Implementation:
 Utilizes vector operations to process multiple elements simultaneously. Loads 4 elements at a time into vec4 variables, performing element-wise operations. Reduces main loop iterations by a factor of 4. Can improve performance through better utilization of SIMD-like capabilities.
@@ -86,7 +88,9 @@ fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
         }
         matrixC[row * N + col] = sum.x + sum.y + sum.z + sum.w;
     }
-}```
+}
+
+```
 
 Shared Memory Implementation:
 Similar to tiled, but explicitly uses workgroup shared memory. Loads data into shared arrays, computes using these faster memory tiles. Employs workgroup barriers for synchronization. Can significantly improve performance for large matrices by reducing memory latency and improving data locality.
@@ -135,4 +139,6 @@ fn main(@builtin(global_invocation_id) global_id : vec3<u32>, @builtin(local_inv
     if (row < N && col < N) {
         matrixC[row * N + col] = sum;
     }
-}```
+}
+
+```
