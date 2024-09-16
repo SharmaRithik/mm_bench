@@ -39,9 +39,23 @@ fn main(@builtin(global_invocation_id) global_id : vec3<u32>, @builtin(local_inv
     let numTiles = (N + ${TILE_SIZE - 1}u) / ${TILE_SIZE}u;
 
     for (var t = 0u; t < numTiles; t = t + 1u) {
-        // Load tiles into shared memory
-        // ...
+        let tileARow = row;
+        let tileACol = t * ${TILE_SIZE}u + localCol;
 
+        if (tileARow < N && tileACol < N) {
+            tileA[localRow][localCol] = matrixA[tileARow * N + tileACol];
+        } else {
+            tileA[localRow][localCol] = 0.0;
+        }
+
+        let tileBRow = t * ${TILE_SIZE}u + localRow;
+        let tileBCol = col;
+
+        if (tileBRow < N && tileBCol < N) {
+            tileB[localRow][localCol] = matrixB[tileBRow * N + tileBCol];
+        } else {
+            tileB[localRow][localCol] = 0.0;
+        }
         workgroupBarrier();
 
         // Compute partial sums
