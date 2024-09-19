@@ -1,5 +1,7 @@
 # WebGPU Matrix Multiplication Benchmark
 
+Try it on: https://sharmarithik.github.io/mm_bench/
+
 ## Matrix multiplication methods
 
 Naive Implementation:
