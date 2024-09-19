@@ -41,11 +41,11 @@
             <input type="checkbox" id="intelligent2" value="intelligent2" checked><label for="intelligent2">Intelligent-2</label>
         </div>
         <button id="runBenchmark">Run Benchmark</button>
+        <button id="testShader" style="margin-left: 10px;">Test Shader</button>
     </div>
     <div id="results">
         <canvas id="benchmarkChart"></canvas>
     </div>
-
     <script type="module">
         function getNaiveWGSL(N) {
             return `
@@ -375,6 +375,48 @@
             return buffer;
         }
 
+        // Function to run tests from test.html
+        async function runTestsFromTestHTML() {
+            const testButton = document.getElementById('testShader');
+            testButton.style.backgroundColor = 'yellow';
+            testButton.textContent = 'Running Tests...';
+        
+            try {
+                const response = await fetch('test.html');
+                const html = await response.text();
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                
+                // Extract the test script
+                const testScript = doc.querySelector('script').textContent;
+                
+                // Create a new function from the script content
+                const runTests = new Function(testScript + '; return runTests;')();
+                
+                // Run the tests
+                await runTests();
+                
+                // Check the results
+                const results = doc.getElementById('results');
+                const failedTests = results.querySelectorAll('.failed');
+                
+                if (failedTests.length > 0) {
+                    testButton.style.backgroundColor = 'red';
+                    testButton.textContent = 'Tests Failed';
+                } else {
+                    testButton.style.backgroundColor = 'green';
+                    testButton.textContent = 'Tests Passed';
+                }
+            } catch (error) {
+                console.error('Error running tests:', error);
+                testButton.style.backgroundColor = 'red';
+                testButton.textContent = 'Error Running Tests';
+            }
+        }
+        
+        // Run tests when the page loads
+        window.addEventListener('load', runTestsFromTestHTML);
+
         async function runBenchmark(device, N, precision, implementation) {
             let shaderModule;
             switch (implementation) {
@@ -544,6 +586,9 @@
             [128, 256, 512, 1024].forEach(size => {
                 document.getElementById(`size${size}`).checked = true;
             });
+        });
+        document.getElementById('testShader').addEventListener('click', () => {
+            window.location.href = 'test.html';
         });
     </script>
 
