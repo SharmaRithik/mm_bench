@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WebGPU Matrix Multiplication Benchmark</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.1/chart.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/hammer.js/2.0.8/hammer.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-zoom/1.2.1/chartjs-plugin-zoom.min.js"></script>
     <style>
         body, html {
             font-family: Arial, sans-serif;
@@ -143,6 +145,24 @@
             background-color: green;
             color: white;
         }
+	@media (max-width: 768px) {
+        .container {
+            padding: 10px;
+        }
+        .row {
+            flex-direction: column;
+        }
+        .tile {
+            margin: 10px 0;
+            width: 100%;
+        }
+        .matrix-sizes-group {
+            grid-template-columns: repeat(3, 1fr);
+        }
+        #benchmarkChart {
+            height: 300px;
+        }
+    }
     </style>
 </head>
 <body>
@@ -150,124 +170,126 @@
         How much GFLOPS can you achieve?
     </div>
     <div class="container">
-        <div class="row">
-            <div class="tile device-info-tile">
-                <div class="tile-header">Device Information</div>
-                <div id="deviceInfo">Loading...</div>
-            </div>
-            <div class="tile matrix-sizes-tile">
-                <div class="tile-header">Matrix Sizes</div>
-                <div class="matrix-sizes-group">
-                    <label><input type="checkbox" class="size-checkbox" id="size8" value="8" checked>8</label>
-                    <label><input type="checkbox" class="size-checkbox" id="size16" value="16" checked>16</label>
-                    <label><input type="checkbox" class="size-checkbox" id="size32" value="32" checked>32</label>
-                    <label><input type="checkbox" class="size-checkbox" id="size64" value="64" checked>64</label>
-                    <label><input type="checkbox" class="size-checkbox" id="size128" value="128" checked>128</label>
-                    <label><input type="checkbox" class="size-checkbox" id="size256" value="256" checked>256</label>
-                    <label><input type="checkbox" class="size-checkbox" id="size512" value="512" checked>512</label>
-                    <label><input type="checkbox" class="size-checkbox" id="size1024" value="1024" checked>1024</label>
-                    <label><input type="checkbox" class="size-checkbox" id="size2048" value="2048" checked>2048</label>
-                    <label><input type="checkbox" class="size-checkbox" id="size4096" value="4096" checked>4096</label>
+	<div id="unsupportedMessage" style="display: none; color: red; font-weight: bold;"></div>
+        <div id="benchmarkControls">
+            <div class="row">
+                <div class="tile device-info-tile">
+                    <div class="tile-header">Device Information</div>
+                    <div id="deviceInfo">Loading...</div>
                 </div>
-                <div style="margin-top: 10px;">
-                    <button id="selectSizes">Select Size</button>
-                    <button id="selectAllSizes">Select All</button>
-                    <button id="resetSizes" class="reset">Reset</button>
-                    <button id="generateButton">Generating</button>
-                </div>
-            </div>
-            <div class="tile benchmark-tile">
-                <div class="tile-header">Benchmark</div>
-                <div>
-                    <label for="iterationNumber">Iteration number:</label>
-                    <input type="number" id="iterationNumber" value="16" min="1" max="100">
-                </div>
-                <div style="margin-top: 10px;">
-                    <button id="runBenchmark">Run Benchmark</button>
-                    <button id="resetBenchmark" class="reset">Reset</button>
-                    <button id="downloadResults">Download Results</button>
-                </div>
-            </div>
-        </div>
-        <div class="row">
-            <div class="tile operation-type-tile">
-                <div class="tile-header">Operation Type</div>
-                <div class="checkbox-group">
-                    <input type="checkbox" id="gemm" value="gemm" checked><label for="gemm">GEMM</label>
-                    <input type="checkbox" id="gemv" value="gemv"><label for="gemv">GEMV</label>
-                </div>
-            </div>
-            <div class="tile multiplication-methods-tile">
-                <div class="tile-header">Multiplication Methods</div>
-                <div class="checkbox-group">
-                    <input type="checkbox" id="naive" value="naive" checked><label for="naive">Naive</label>
-                    <input type="checkbox" id="gmemCoalescing" value="gmemCoalescing" checked><label for="gmemCoalescing">GMEM Coalescing</label>
-                    <input type="checkbox" id="smemCaching" value="smemCaching" checked><label for="smemCaching">SMEM Caching</label>
-                    <input type="checkbox" id="blocktiling1D" value="blocktiling1D" checked><label for="blocktiling1D">1D Blocktiling</label>
-                    <input type="checkbox" id="blocktiling2D" value="blocktiling2D" checked><label for="blocktiling2D">2D Blocktiling</label>
-                    <input type="checkbox" id="vectorizedMemAccess" value="vectorizedMemAccess" checked><label for="vectorizedMemAccess">Vectorized Mem Access</label>
-                </div>
-                <div style="margin-top: 10px;">
-                    <button id="selectAllMethods">Select All</button>
-                    <button id="resetMethods" class="reset">Reset</button>
-                </div>
-            </div>
-            <div class="tile tuning-tile">
-                <div class="tile-header">Tuning Parameters</div>
-                <div class="workgroup-sizes">
-                    <h4>Workgroup Sizes</h4>
-                    <div class="workgroup-size-options">
-                        <div class="workgroup-size-option">
-                            <input type="checkbox" id="workgroup4x4" name="workgroupSize" value="4,4">
-                            <label for="workgroup4x4">4x4</label>
-                        </div>
-                        <div class="workgroup-size-option">
-                            <input type="checkbox" id="workgroup8x8" name="workgroupSize" value="8,8">
-                            <label for="workgroup8x8">8x8</label>
-                        </div>
-                        <div class="workgroup-size-option">
-                            <input type="checkbox" id="workgroup16x16" name="workgroupSize" value="16,16" checked>
-                            <label for="workgroup16x16">16x16</label>
-                        </div>
+                <div class="tile matrix-sizes-tile">
+                    <div class="tile-header">Matrix Sizes</div>
+                    <div class="matrix-sizes-group">
+                        <label><input type="checkbox" class="size-checkbox" id="size8" value="8" checked>8</label>
+                        <label><input type="checkbox" class="size-checkbox" id="size16" value="16" checked>16</label>
+                        <label><input type="checkbox" class="size-checkbox" id="size32" value="32" checked>32</label>
+                        <label><input type="checkbox" class="size-checkbox" id="size64" value="64" checked>64</label>
+                        <label><input type="checkbox" class="size-checkbox" id="size128" value="128" checked>128</label>
+                        <label><input type="checkbox" class="size-checkbox" id="size256" value="256" checked>256</label>
+                        <label><input type="checkbox" class="size-checkbox" id="size512" value="512" checked>512</label>
+                        <label><input type="checkbox" class="size-checkbox" id="size1024" value="1024" checked>1024</label>
+                        <label><input type="checkbox" class="size-checkbox" id="size2048" value="2048" checked>2048</label>
+                        <label><input type="checkbox" class="size-checkbox" id="size4096" value="4096" checked>4096</label>
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <button id="selectSizes">Select Size</button>
+                        <button id="selectAllSizes">Select All</button>
+                        <button id="resetSizes" class="reset">Reset</button>
+                        <button id="generateButton">Generating</button>
                     </div>
                 </div>
-                <div class="tile-sizes">
-                    <h4>Tile Sizes (GMEM Coalescing only)</h4>
-                    <div class="tile-size-options">
-                        <div class="tile-size-option">
-                            <input type="checkbox" id="tileSize4" name="tileSize" value="4">
-                            <label for="tileSize4">4x4</label>
-                        </div>
-                        <div class="tile-size-option">
-                            <input type="checkbox" id="tileSize8" name="tileSize" value="8">
-                            <label for="tileSize8">8x8</label>
-                        </div>
-                        <div class="tile-size-option">
-                            <input type="checkbox" id="tileSize16" name="tileSize" value="16" checked>
-                            <label for="tileSize16">16x16</label>
-                        </div>
+                <div class="tile benchmark-tile">
+                    <div class="tile-header">Benchmark</div>
+                    <div>
+                        <label for="iterationNumber">Iteration number:</label>
+                        <input type="number" id="iterationNumber" value="16" min="1" max="100">
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <button id="runBenchmark">Run Benchmark</button>
+                        <button id="resetBenchmark" class="reset">Reset</button>
+                        <button id="downloadResults">Download Results</button>
                     </div>
                 </div>
-                <div style="margin-top: 10px;">
-                    <button id="selectAllTuningMethods">Select All Tuning Methods</button>
+            </div>
+            <div class="row">
+                <div class="tile operation-type-tile">
+                    <div class="tile-header">Operation Type</div>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="gemm" value="gemm" checked><label for="gemm">GEMM</label>
+                        <input type="checkbox" id="gemv" value="gemv"><label for="gemv">GEMV</label>
+                    </div>
+                </div>
+                <div class="tile multiplication-methods-tile">
+                    <div class="tile-header">Multiplication Methods</div>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="naive" value="naive" checked><label for="naive">Naive</label>
+                        <input type="checkbox" id="gmemCoalescing" value="gmemCoalescing" checked><label for="gmemCoalescing">GMEM Coalescing</label>
+                        <input type="checkbox" id="smemCaching" value="smemCaching" checked><label for="smemCaching">SMEM Caching</label>
+                        <input type="checkbox" id="blocktiling1D" value="blocktiling1D" checked><label for="blocktiling1D">1D Blocktiling</label>
+                        <input type="checkbox" id="blocktiling2D" value="blocktiling2D" checked><label for="blocktiling2D">2D Blocktiling</label>
+                        <input type="checkbox" id="vectorizedMemAccess" value="vectorizedMemAccess" checked><label for="vectorizedMemAccess">Vectorized Mem Access</label>
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <button id="selectAllMethods">Select All</button>
+                        <button id="resetMethods" class="reset">Reset</button>
+                    </div>
+                </div>
+                <div class="tile tuning-tile">
+                    <div class="tile-header">Tuning Parameters</div>
+                    <div class="workgroup-sizes">
+                        <h4>Workgroup Sizes</h4>
+                        <div class="workgroup-size-options">
+                            <div class="workgroup-size-option">
+                                <input type="checkbox" id="workgroup4x4" name="workgroupSize" value="4,4">
+                                <label for="workgroup4x4">4x4</label>
+                            </div>
+                            <div class="workgroup-size-option">
+                                <input type="checkbox" id="workgroup8x8" name="workgroupSize" value="8,8">
+                                <label for="workgroup8x8">8x8</label>
+                            </div>
+                            <div class="workgroup-size-option">
+                                <input type="checkbox" id="workgroup16x16" name="workgroupSize" value="16,16" checked>
+                                <label for="workgroup16x16">16x16</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="tile-sizes">
+                        <h4>Tile Sizes (GMEM Coalescing only)</h4>
+                        <div class="tile-size-options">
+                            <div class="tile-size-option">
+                                <input type="checkbox" id="tileSize4" name="tileSize" value="4">
+                                <label for="tileSize4">4x4</label>
+                            </div>
+                            <div class="tile-size-option">
+                                <input type="checkbox" id="tileSize8" name="tileSize" value="8">
+                                <label for="tileSize8">8x8</label>
+                            </div>
+                            <div class="tile-size-option">
+                                <input type="checkbox" id="tileSize16" name="tileSize" value="16" checked>
+                                <label for="tileSize16">16x16</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <button id="selectAllTuningMethods">Select All Tuning Methods</button>
+                    </div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="tile results-tile">
+                    <div class="tile-header">Results</div>
+                    <div id="resultsTables"></div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="tile graph-tile">
+                    <div class="tile-header">Graph</div>
+                    <div class="chart-container">
+                        <canvas id="benchmarkChart"></canvas>
+                    </div>
                 </div>
             </div>
         </div>
-        <div class="row">
-            <div class="tile results-tile">
-                <div class="tile-header">Results</div>
-                <div id="resultsTables"></div>
-            </div>
-        </div>
-        <div class="row">
-            <div class="tile graph-tile">
-                <div class="tile-header">Graph</div>
-                <div class="chart-container">
-                    <canvas id="benchmarkChart"></canvas>
-                </div>
-            </div>
-        </div>
-    </div>
     <script type="module">
         let device;
 
@@ -525,6 +547,38 @@
             return { time: endTime - startTime, verified: isVerified };
         }
 
+        async function checkWebGPUSupport() {
+            if (!navigator.gpu) {
+                return false;
+            }
+            try {
+                const adapter = await navigator.gpu.requestAdapter();
+                if (!adapter) {
+                    return false;
+                }
+                return true;
+            } catch (e) {
+                return false;
+            }
+        }
+        
+        async function updateUIForSupport() {
+            const isSupported = await checkWebGPUSupport();
+            const unsupportedMessage = document.getElementById('unsupportedMessage');
+            const benchmarkControls = document.getElementById('benchmarkControls');
+            
+            if (!isSupported) {
+                unsupportedMessage.style.display = 'block';
+                unsupportedMessage.textContent = 'WebGPU is not supported on this device. The benchmark cannot run.';
+                benchmarkControls.style.display = 'none';
+            } else {
+                unsupportedMessage.style.display = 'none';
+                benchmarkControls.style.display = 'block';
+            }
+        }
+        
+        window.addEventListener('load', updateUIForSupport);
+
         async function performBenchmark() {
             const operationTypes = ['gemm', 'gemv'].filter(op => document.getElementById(op).checked);
             const implementations = ['naive', 'gmemCoalescing', 'smemCaching', 'blocktiling1D', 'blocktiling2D', 'vectorizedMemAccess'].filter(impl => document.getElementById(impl).checked);
@@ -768,6 +822,7 @@ function updateChart(results) {
                     pan: {
                         enabled: true,
                         mode: 'xy',
+			threshold: 10,
                     }
                 }
             }
@@ -871,31 +926,8 @@ function updateChart(results) {
             document.querySelectorAll('input[name="tileSize"]').forEach(cb => cb.checked = true);
         });
 
-        function getGPUInfo() {
-            const canvas = document.createElement('canvas');
-            let gl;
-            let debugInfo;
-            let renderer;
-
-            try {
-                gl = canvas.getContext('webgl2') || canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-            } catch (e) {
-                return { renderer: 'Unable to get WebGL context' };
-            }
-
-            if (gl) {
-                debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-                if (debugInfo) {
-                    renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
-                } else {
-                    renderer = gl.getParameter(gl.RENDERER);
-                }
-            }
-
-            return { renderer };
-        }
-
         async function updateDeviceInfo() {
+            const deviceInfoElement = document.getElementById("deviceInfo");
             try {
                 if (!navigator.gpu) {
                     throw new Error("WebGPU not supported on this browser.");
@@ -905,10 +937,8 @@ function updateChart(results) {
                     throw new Error("No appropriate GPUAdapter found.");
                 }
                 const device = await adapter.requestDevice();
-        
                 const adapterInfo = await adapter.requestAdapterInfo();
                 
-                const deviceInfoElement = document.getElementById("deviceInfo");
                 deviceInfoElement.innerHTML = `
                     <strong>GPU Vendor:</strong> ${adapterInfo.vendor}<br>
                     <strong>GPU Architecture:</strong> ${adapterInfo.architecture}<br>
@@ -924,11 +954,14 @@ function updateChart(results) {
                     Y: ${device.limits.maxComputeWorkgroupsPerDimension},
                     Z: ${device.limits.maxComputeWorkgroupsPerDimension}
                 `;
-        
-                console.log("Device info updated:", adapterInfo);
             } catch (error) {
                 console.error("Error updating device info:", error);
-                document.getElementById("deviceInfo").textContent = `Error: ${error.message}`;
+                deviceInfoElement.innerHTML = `
+                    <strong>Device:</strong> ${navigator.platform}<br>
+                    <strong>Browser:</strong> ${navigator.userAgent}<br>
+                    <strong>WebGPU Support:</strong> Not available<br>
+                    <strong>Error:</strong> ${error.message}
+                `;
             }
         }
         // Initialize WebGPU when the page loads
