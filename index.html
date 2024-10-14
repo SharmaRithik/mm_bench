@@ -632,69 +632,172 @@
 
         let benchmarkChart;
 
-        function updateChart(results) {
-            const ctx = document.getElementById("benchmarkChart").getContext("2d");
+function updateChart(results) {
+    const ctx = document.getElementById("benchmarkChart").getContext("2d");
 
-            if (benchmarkChart && typeof benchmarkChart.destroy === 'function') {
-                benchmarkChart.destroy();
-            }
+    if (benchmarkChart && typeof benchmarkChart.destroy === 'function') {
+        benchmarkChart.destroy();
+    }
 
-            const datasets = [];
-            const operationTypes = ['gemm', 'gemv'];
-            const implementations = Object.keys(results);
-            const colors = ['red', 'blue', 'green', 'purple', 'orange', 'pink', 'cyan', 'magenta', 'yellow', 'black'];
+    const datasets = [];
+    const operationTypes = ['gemm', 'gemv'];
+    const implementations = Object.keys(results);
+    const colors = ['red', 'blue', 'green', 'purple', 'orange', 'pink', 'cyan', 'magenta', 'yellow', 'black'];
+    const matrixSizes = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
 
-            implementations.forEach((implementation, index) => {
-                operationTypes.forEach(operationType => {
-                    const data = results[implementation]
-                        .filter(r => r.operationType === operationType)
-                        .map(r => ({ x: r.size, y: r.time }));
+    let minTime = Infinity;
+    let maxTime = -Infinity;
 
-                    if (data.length > 0) {
-                        datasets.push({
-			label: `${operationType.toUpperCase()} - ${implementation}`,
-                            data: data,
-                            borderColor: colors[index % colors.length],
-                            fill: false
-                        });
-                    }
-                });
+    implementations.forEach((implementation, index) => {
+        operationTypes.forEach(operationType => {
+            const data = matrixSizes.map(size => {
+                const result = results[implementation].find(r => r.operationType === operationType && r.size === size);
+                if (result) {
+                    minTime = Math.min(minTime, result.time);
+                    maxTime = Math.max(maxTime, result.time);
+                }
+                return result ? result.time : null;
             });
 
-            benchmarkChart = new Chart(ctx, {
-                type: "line",
-                data: {
-                    datasets: datasets
+            if (data.some(v => v !== null)) {
+                datasets.push({
+                    label: `${operationType.toUpperCase()} - ${implementation}`,
+                    data: data,
+                    borderColor: colors[index % colors.length],
+                    backgroundColor: colors[index % colors.length],
+                    fill: false,
+                    borderWidth: 2,
+                    pointRadius: 4,
+                    pointHoverRadius: 6,
+                    spanGaps: true
+                });
+            }
+        });
+    });
+
+    const yAxisConfig = {
+        logarithmic: {
+            type: 'logarithmic',
+            title: {
+                display: true,
+                text: 'Time (Log Scale)'
+            },
+            ticks: {
+                callback: function(value, index, values) {
+                    if (value >= 1000) {
+                        return (value / 1000).toFixed(1) + 's';
+                    }
+                    return value.toFixed(0) + 'ms';
                 },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
+                maxTicksLimit: 6
+            }
+        },
+        linear: {
+            type: 'linear',
+            title: {
+                display: true,
+                text: 'Time (Linear Scale)'
+            },
+            ticks: {
+                callback: function(value, index, values) {
+                    if (value >= 1000) {
+                        return (value / 1000).toFixed(1) + 's';
+                    }
+                    return value.toFixed(0) + 'ms';
+                },
+                maxTicksLimit: 8
+            }
+        }
+    };
+
+    let currentYAxisType = 'logarithmic';
+
+    benchmarkChart = new Chart(ctx, {
+        type: "line",
+        data: {
+            labels: matrixSizes,
+            datasets: datasets
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            title: {
+                display: true,
+                text: 'Matrix Multiplication Performance'
+            },
+            scales: {
+                x: {
+                    type: 'category',
                     title: {
                         display: true,
-                        text: 'Matrix Multiplication Performance'
+                        text: 'Matrix Size'
                     },
-                    scales: {
-                        x: {
-                            type: 'category',
-                            position: 'bottom',
-                            title: {
-                                display: true,
-                                text: 'Matrix Size'
-                            },
-                            labels: [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096]
-                        },
-                        y: {
-                            type: 'logarithmic',
-                            title: {
-                                display: true,
-                                text: 'Time (ms)'
+                    ticks: {
+                        autoSkip: false,
+                        maxRotation: 0,
+                        minRotation: 0
+                    }
+                },
+                y: yAxisConfig.logarithmic
+            },
+            plugins: {
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            let label = context.dataset.label || '';
+                            if (label) {
+                                label += ': ';
                             }
+                            if (context.parsed.y !== null) {
+                                label += `${context.parsed.y.toFixed(2)} ms`;
+                            }
+                            return label;
                         }
                     }
+                },
+                zoom: {
+                    zoom: {
+                        wheel: {
+                            enabled: true,
+                        },
+                        pinch: {
+                            enabled: true
+                        },
+                        mode: 'xy',
+                    },
+                    pan: {
+                        enabled: true,
+                        mode: 'xy',
+                    }
                 }
-            });
+            }
+        }
+    });
+
+    // Add toggle button for y-axis scale
+    const toggleButton = document.createElement('button');
+    toggleButton.textContent = 'Toggle Y-Axis Scale';
+    toggleButton.style.marginTop = '10px';
+    ctx.canvas.parentNode.insertBefore(toggleButton, ctx.canvas.nextSibling);
+
+    toggleButton.addEventListener('click', () => {
+        currentYAxisType = currentYAxisType === 'logarithmic' ? 'linear' : 'logarithmic';
+        benchmarkChart.options.scales.y = yAxisConfig[currentYAxisType];
+        
+        if (currentYAxisType === 'linear') {
+            // Set a custom range for linear scale to focus on the data
+            const range = maxTime - minTime;
+            benchmarkChart.options.scales.y.min = Math.max(0, minTime - range * 0.1);
+            benchmarkChart.options.scales.y.max = maxTime + range * 0.1;
+        } else {
+            // Reset range for logarithmic scale
+            delete benchmarkChart.options.scales.y.min;
+            delete benchmarkChart.options.scales.y.max;
         }
 
+        benchmarkChart.update();
+    });
+}
         function downloadResults() {
             const tables = document.querySelectorAll('#resultsTables table');
             let csv = [];
@@ -793,25 +896,41 @@
         }
 
         async function updateDeviceInfo() {
-            const adapter = await navigator.gpu.requestAdapter();
-            const device = await adapter.requestDevice();
-
-            let gpuInfo = getGPUInfo();
-            const deviceInfoElement = document.getElementById("deviceInfo");
-            deviceInfoElement.innerHTML = `
-                <strong>GPU:</strong> ${gpuInfo.renderer || 'Unknown'}<br>
-                <strong>Max Workgroup Size:</strong>
-                X: ${device.limits.maxComputeWorkgroupSizeX},
-                Y: ${device.limits.maxComputeWorkgroupSizeY},
-                Z: ${device.limits.maxComputeWorkgroupSizeZ}<br>
-                <strong>Max Workgroup Storage:</strong> ${device.limits.maxComputeWorkgroupStorageSize} bytes<br>
-                <strong>Max Invocations Per Workgroup:</strong> ${device.limits.maxComputeInvocationsPerWorkgroup}<br>
-                <strong>Max Storage Buffer Binding Size:</strong> ${device.limits.maxStorageBufferBindingSize} bytes
-            `;
-
-            console.log(`GPU: ${gpuInfo.renderer}`);
+            try {
+                if (!navigator.gpu) {
+                    throw new Error("WebGPU not supported on this browser.");
+                }
+                const adapter = await navigator.gpu.requestAdapter();
+                if (!adapter) {
+                    throw new Error("No appropriate GPUAdapter found.");
+                }
+                const device = await adapter.requestDevice();
+        
+                const adapterInfo = await adapter.requestAdapterInfo();
+                
+                const deviceInfoElement = document.getElementById("deviceInfo");
+                deviceInfoElement.innerHTML = `
+                    <strong>GPU Vendor:</strong> ${adapterInfo.vendor}<br>
+                    <strong>GPU Architecture:</strong> ${adapterInfo.architecture}<br>
+                    <strong>Max Workgroup Size:</strong>
+                    X: ${device.limits.maxComputeWorkgroupSizeX},
+                    Y: ${device.limits.maxComputeWorkgroupSizeY},
+                    Z: ${device.limits.maxComputeWorkgroupSizeZ}<br>
+                    <strong>Max Workgroup Storage:</strong> ${device.limits.maxComputeWorkgroupStorageSize} bytes<br>
+                    <strong>Max Invocations Per Workgroup:</strong> ${device.limits.maxComputeInvocationsPerWorkgroup}<br>
+                    <strong>Max Storage Buffer Binding Size:</strong> ${device.limits.maxStorageBufferBindingSize} bytes<br>
+                    <strong>Max Compute Workgroups Per Dimension:</strong>
+                    X: ${device.limits.maxComputeWorkgroupsPerDimension},
+                    Y: ${device.limits.maxComputeWorkgroupsPerDimension},
+                    Z: ${device.limits.maxComputeWorkgroupsPerDimension}
+                `;
+        
+                console.log("Device info updated:", adapterInfo);
+            } catch (error) {
+                console.error("Error updating device info:", error);
+                document.getElementById("deviceInfo").textContent = `Error: ${error.message}`;
+            }
         }
-
         // Initialize WebGPU when the page loads
         window.onload = async function() {
             try {
