@@ -226,9 +226,14 @@
                         <input type="checkbox" id="gmemCoalescing" value="gmemCoalescing" checked><label for="gmemCoalescing">GMEM Coalescing</label>
                         <input type="checkbox" id="smemCaching" value="smemCaching" checked><label for="smemCaching">SMEM Caching</label>
 			<input type="checkbox" id="vectorized" value="vectorized" checked><label for="vectorized">Vectorized</label>
-                        <input type="checkbox" id="blocktiling1D" value="blocktiling1D" checked><label for="blocktiling1D">1D Blocktiling</label>
-                        <input type="checkbox" id="blocktiling2D" value="blocktiling2D" checked><label for="blocktiling2D">2D Blocktiling</label>
-                        <input type="checkbox" id="vectorizedMemAccess" value="vectorizedMemAccess" checked><label for="vectorizedMemAccess">Vectorized Mem Access</label>
+			<input type="checkbox" id="Global2dTiling8" value="Global2dTiling8" checked><label for="Global2dTiling8">Global 2D Tiling 8x8</label>
+			<input type="checkbox" id="Shared2dTiling8" value="Shared2dTiling8" checked><label for="Shared2dTiling8">Shared 2D Tiling 8x8</label>
+                        <input type="checkbox" id="Global2dTiling16" value="Global2dTiling16" checked><label for="Global2dTiling16">Global 2D Tiling 16x16</label>
+                        <input type="checkbox" id="Shared2dTiling16" value="Shared2dTiling16" checked><label for="Shared2dTiling16">Shared 2D Tiling 16x16</label>
+		        <input type="checkbox" id="Global1dTiling8" value="Global1dTiling8"><label for="Global1dTiling8">Global 1D Tiling 8</label>
+                        <input type="checkbox" id="Shared1dTiling8" value="Shared1dTiling8"><label for="Shared1dTiling8">Shared 1D Tiling 8</label>
+                        <input type="checkbox" id="Global1dTiling16" value="Global1dTiling16"><label for="Global1dTiling16">Global 1D Tiling 16</label>
+                        <input type="checkbox" id="Shared1dTiling16" value="Shared1dTiling16"><label for="Shared1dTiling16">Shared 1D Tiling 16</label>
                     </div>
                     <div style="margin-top: 10px;">
                         <button id="selectAllMethods">Select All</button>
@@ -524,6 +529,395 @@
             `;
         }
 
+        function getGlobalTiledWGSL8x8(workgroupSize) {
+            const [x, y] = workgroupSize.split(',').map(Number);
+            return `
+                @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+                @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+                @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+                @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+                
+                struct Uniforms {
+                    N : u32,
+                    alpha : f32,
+                    beta : f32,
+                }
+        
+                @compute @workgroup_size(${x}, ${y})
+                fn main(@builtin(global_invocation_id) global_id : vec3<u32>, @builtin(local_invocation_id) local_id : vec3<u32>) {
+                    let row = global_id.y;
+                    let col = global_id.x;
+                    let N = uniforms.N;
+        
+                    var acc = 0.0;
+                    let numTiles = (N + 8u - 1u) / 8u;
+        
+                    // Check row and column bounds only once
+                    let validRow = row < N;
+                    let validCol = col < N;
+        
+                    // Perform tiling without using shared memory
+                    if (validRow && validCol) {
+                        for (var t = 0u; t < numTiles; t = t + 1u) {
+                            for (var k = 0u; k < 8u; k = k + 1u) {
+                                let aIndex = row * N + (t * 8u + k);
+                                let bIndex = (t * 8u + k) * N + col;
+        
+                                if (aIndex < N * N && bIndex < N * N) {
+                                    acc = acc + matrixA[aIndex] * matrixB[bIndex];
+                                }
+                            }
+                        }
+        
+                        // Write the result to matrixC
+                        matrixC[row * N + col] = uniforms.alpha * acc + uniforms.beta * matrixC[row * N + col];
+                    }
+                }
+            `;
+        }
+        
+        function getSharedTiledWGSL8x8(workgroupSize) {
+            const [x, y] = workgroupSize.split(',').map(Number);
+            return `
+                @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+                @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+                @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+                @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+                
+                struct Uniforms {
+                    N : u32,
+                    alpha : f32,
+                    beta : f32,
+                }
+        
+                // Shared memory for tiles (shared across the workgroup)
+                var<workgroup> tileA : array<array<f32, 8>, 8>;
+                var<workgroup> tileB : array<array<f32, 8>, 8>;
+        
+                @compute @workgroup_size(${x}, ${y})
+                fn main(@builtin(global_invocation_id) global_id : vec3<u32>, @builtin(local_invocation_id) local_id : vec3<u32>) {
+                    let row = global_id.y;
+                    let col = global_id.x;
+                    let N = uniforms.N;
+        
+                    var acc = 0.0;
+                    let numTiles = (N + 8u - 1u) / 8u;
+        
+                    // Check row and column bounds only once
+                    let validRow = row < N;
+                    let validCol = col < N;
+        
+                    // Loop over the number of tiles
+                    for (var t = 0u; t < numTiles; t = t + 1u) {
+                        // Load tileA from matrixA into shared memory only if row is valid
+                        if (validRow && (t * 8u + local_id.x) < N) {
+                            tileA[local_id.y][local_id.x] = matrixA[row * N + t * 8u + local_id.x];
+                        } else {
+                            tileA[local_id.y][local_id.x] = 0.0;
+                        }
+        
+                        // Load tileB from matrixB into shared memory only if col is valid
+                        if (validCol && (t * 8u + local_id.y) < N) {
+                            tileB[local_id.y][local_id.x] = matrixB[(t * 8u + local_id.y) * N + col];
+                        } else {
+                            tileB[local_id.y][local_id.x] = 0.0;
+                        }
+        
+                        // Synchronize to ensure all threads have loaded their tile data
+                        workgroupBarrier();
+        
+                        // Multiply the two tiles and accumulate the result
+                        for (var k = 0u; k < 8u; k = k + 1u) {
+                            acc = acc + tileA[local_id.y][k] * tileB[k][local_id.x];
+                        }
+        
+                        // Synchronize before loading the next tile
+                        workgroupBarrier();
+                    }
+        
+                    // Write the result to matrixC only if row and col are valid
+                    if (validRow && validCol) {
+                        matrixC[row * N + col] = uniforms.alpha * acc + uniforms.beta * matrixC[row * N + col];
+                    }
+                }
+            `;
+        }
+
+        function getGlobalTiledWGSL16x16(workgroupSize) {
+            const [x, y] = workgroupSize.split(',').map(Number);
+            return `
+                @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+                @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+                @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+                @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+                
+                struct Uniforms {
+                    N : u32,
+                    alpha : f32,
+                    beta : f32,
+                }
+        
+                @compute @workgroup_size(${x}, ${y})
+                fn main(@builtin(global_invocation_id) global_id : vec3<u32>, @builtin(local_invocation_id) local_id : vec3<u32>) {
+                    let row = global_id.y;
+                    let col = global_id.x;
+                    let N = uniforms.N;
+        
+                    var acc = 0.0;
+                    let numTiles = (N + 16u - 1u) / 16u;
+        
+                    // Check row and column bounds only once
+                    let validRow = row < N;
+                    let validCol = col < N;
+        
+                    // Perform tiling without using shared memory
+                    if (validRow && validCol) {
+                        for (var t = 0u; t < numTiles; t = t + 1u) {
+                            for (var k = 0u; k < 16u; k = k + 1u) {
+                                let aIndex = row * N + (t * 16u + k);
+                                let bIndex = (t * 16u + k) * N + col;
+        
+                                if (aIndex < N * N && bIndex < N * N) {
+                                    acc = acc + matrixA[aIndex] * matrixB[bIndex];
+                                }
+                            }
+                        }
+        
+                        // Write the result to matrixC
+                        matrixC[row * N + col] = uniforms.alpha * acc + uniforms.beta * matrixC[row * N + col];
+                    }
+                }
+            `;
+        }
+        
+        function getSharedTiledWGSL16x16(workgroupSize) {
+            const [x, y] = workgroupSize.split(',').map(Number);
+            return `
+                @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+                @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+                @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+                @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+                
+                struct Uniforms {
+                    N : u32,
+                    alpha : f32,
+                    beta : f32,
+                }
+        
+                // Shared memory for tiles (shared across the workgroup)
+                var<workgroup> tileA : array<array<f32, 16>, 16>;
+                var<workgroup> tileB : array<array<f32, 16>, 16>;
+        
+                @compute @workgroup_size(${x}, ${y})
+                fn main(@builtin(global_invocation_id) global_id : vec3<u32>, @builtin(local_invocation_id) local_id : vec3<u32>) {
+                    let row = global_id.y;
+                    let col = global_id.x;
+                    let N = uniforms.N;
+        
+                    var acc = 0.0;
+                    let numTiles = (N + 16u - 1u) / 16u;
+        
+                    // Check row and column bounds only once
+                    let validRow = row < N;
+                    let validCol = col < N;
+        
+                    // Loop over the number of tiles
+                    for (var t = 0u; t < numTiles; t = t + 1u) {
+                        // Load tileA from matrixA into shared memory only if row is valid
+                        if (validRow && (t * 16u + local_id.x) < N) {
+                            tileA[local_id.y][local_id.x] = matrixA[row * N + t * 16u + local_id.x];
+                        } else {
+                            tileA[local_id.y][local_id.x] = 0.0;
+                        }
+        
+                        // Load tileB from matrixB into shared memory only if col is valid
+                        if (validCol && (t * 16u + local_id.y) < N) {
+                            tileB[local_id.y][local_id.x] = matrixB[(t * 16u + local_id.y) * N + col];
+                        } else {
+                            tileB[local_id.y][local_id.x] = 0.0;
+                        }
+        
+                        // Synchronize to ensure all threads have loaded their tile data
+                        workgroupBarrier();
+        
+                        // Multiply the two tiles and accumulate the result
+                        for (var k = 0u; k < 16u; k = k + 1u) {
+                            acc = acc + tileA[local_id.y][k] * tileB[k][local_id.x];
+                        }
+        
+                        // Synchronize before loading the next tile
+                        workgroupBarrier();
+                    }
+        
+                    // Write the result to matrixC only if row and col are valid
+                    if (validRow && validCol) {
+                        matrixC[row * N + col] = uniforms.alpha * acc + uniforms.beta * matrixC[row * N + col];
+                    }
+                }
+            `;
+        }
+
+function getGlobal1dTiling8(workgroupSize) {
+    return `
+        @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+        @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+        @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+        @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+        
+        struct Uniforms {
+            N : u32,
+            alpha : f32,
+            beta : f32,
+        }
+
+        @compute @workgroup_size(${workgroupSize})
+        fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
+            let N = uniforms.N;
+            let totalElements = N * N;
+            let globalIndex = global_id.x;
+
+            if (globalIndex >= totalElements) {
+                return;
+            }
+
+            let row = globalIndex / N;
+            let col = globalIndex % N;
+
+            var sum = 0.0;
+            for (var k: u32 = 0u; k < N; k += 8u) {
+                for (var i: u32 = 0u; i < 8u && k + i < N; i += 1u) {
+                    sum += matrixA[row * N + k + i] * matrixB[(k + i) * N + col];
+                }
+            }
+            let index = row * N + col;
+            matrixC[index] = uniforms.alpha * sum + uniforms.beta * matrixC[index];
+        }
+    `;
+}
+
+        function getShared1dTiling8(workgroupSize) {
+            return `
+                @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+                @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+                @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+                @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+                
+                struct Uniforms {
+                    N : u32,
+                    alpha : f32,
+                    beta : f32,
+                }
+
+                var<workgroup> tileA: array<f32, 8>;
+                var<workgroup> tileB: array<f32, 8>;
+
+                @compute @workgroup_size(${workgroupSize})
+                fn main(@builtin(global_invocation_id) global_id : vec3<u32>, @builtin(local_invocation_id) local_id : vec3<u32>) {
+                    let N = uniforms.N;
+                    let row = global_id.x / N;
+                    let col = global_id.x % N;
+
+                    var sum = 0.0;
+
+                    if (row < N && col < N) {
+                        for (var k: u32 = 0u; k < N; k += 8u) {
+                            if (local_id.x < 8u) {
+                                tileA[local_id.x] = matrixA[row * N + k + local_id.x];
+                                tileB[local_id.x] = matrixB[(k + local_id.x) * N + col];
+                            }
+                            workgroupBarrier();
+
+                            for (var i: u32 = 0u; i < 8u && k + i < N; i += 1u) {
+                                sum += tileA[i] * tileB[i];
+                            }
+                            workgroupBarrier();
+                        }
+
+                        let index = row * N + col;
+                        matrixC[index] = uniforms.alpha * sum + uniforms.beta * matrixC[index];
+                    }
+                }
+            `;
+        }
+
+        function getGlobal1dTiling16(workgroupSize) {
+            return `
+                @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+                @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+                @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+                @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+                
+                struct Uniforms {
+                    N : u32,
+                    alpha : f32,
+                    beta : f32,
+                }
+
+                @compute @workgroup_size(${workgroupSize})
+                fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
+                    let N = uniforms.N;
+                    let row = global_id.x / N;
+                    let col = global_id.x % N;
+
+                    if (row < N && col < N) {
+                        var sum = 0.0;
+                        for (var k: u32 = 0u; k < N; k += 16u) {
+                            for (var i: u32 = 0u; i < 16u && k + i < N; i += 1u) {
+                                sum += matrixA[row * N + k + i] * matrixB[(k + i) * N + col];
+                            }
+                        }
+                        let index = row * N + col;
+                        matrixC[index] = uniforms.alpha * sum + uniforms.beta * matrixC[index];
+                    }
+                }
+            `;
+        }
+
+        function getShared1dTiling16(workgroupSize) {
+            return `
+                @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+                @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+                @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+                @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+                
+                struct Uniforms {
+                    N : u32,
+                    alpha : f32,
+                    beta : f32,
+                }
+
+                var<workgroup> tileA: array<f32, 16>;
+                var<workgroup> tileB: array<f32, 16>;
+
+                @compute @workgroup_size(${workgroupSize})
+                fn main(@builtin(global_invocation_id) global_id : vec3<u32>, @builtin(local_invocation_id) local_id : vec3<u32>) {
+                    let N = uniforms.N;
+                    let row = global_id.x / N;
+                    let col = global_id.x % N;
+
+                    var sum = 0.0;
+
+                    if (row < N && col < N) {
+                        for (var k: u32 = 0u; k < N; k += 16u) {
+                            if (local_id.x < 16u) {
+                                tileA[local_id.x] = matrixA[row * N + k + local_id.x];
+                                tileB[local_id.x] = matrixB[(k + local_id.x) * N + col];
+                            }
+                            workgroupBarrier();
+
+                            for (var i: u32 = 0u; i < 16u && k + i < N; i += 1u) {
+                                sum += tileA[i] * tileB[i];
+                            }
+                            workgroupBarrier();
+                        }
+
+                        let index = row * N + col;
+                        matrixC[index] = uniforms.alpha * sum + uniforms.beta * matrixC[index];
+                    }
+                }
+            `;
+        }
+
         function verifyMatrixMultiplication(matrixA, matrixB, resultMatrix, N, alpha, beta, numChecks = 20) {
             for (let check = 0; check < numChecks; check++) {
                 const row = Math.floor(Math.random() * N);
@@ -547,103 +941,131 @@
             }
             return true;
         }
+async function runBenchmark(N, operationType, implementation, workgroupSize, tileSize) {
+    let shaderModule;
+    switch (implementation) {
+        case 'naive':
+            shaderModule = device.createShaderModule({ code: getNaiveWGSL(workgroupSize) });
+            break;
+        case 'gmemCoalescing':
+            shaderModule = device.createShaderModule({ code: getGMEMCoalescingWGSL(workgroupSize, tileSize) });
+            break;
+        case 'smemCaching':
+            shaderModule = device.createShaderModule({ code: getSMEMCacheBlockingWGSL(workgroupSize, tileSize) });
+            break;
+        case 'vectorized':
+            shaderModule = device.createShaderModule({ code: getVectorizedWGSL(workgroupSize) });
+            break;
+        case 'Global2dTiling8':
+            shaderModule = device.createShaderModule({ code: getGlobalTiledWGSL8x8(workgroupSize) });
+            break;
+        case 'Shared2dTiling8':
+            shaderModule = device.createShaderModule({ code: getSharedTiledWGSL8x8(workgroupSize) });
+            break;
+        case 'Global2dTiling16':
+            shaderModule = device.createShaderModule({ code: getGlobalTiledWGSL16x16(workgroupSize) });
+            break;
+        case 'Shared2dTiling16':
+            shaderModule = device.createShaderModule({ code: getSharedTiledWGSL16x16(workgroupSize) });
+            break;
+        case 'Global1dTiling8':
+            shaderModule = device.createShaderModule({ code: getGlobal1dTiling8(workgroupSize) });
+            break;
+        case 'Shared1dTiling8':
+            shaderModule = device.createShaderModule({ code: getShared1dTiling8(workgroupSize) });
+            break;
+        case 'Global1dTiling16':
+            shaderModule = device.createShaderModule({ code: getGlobal1dTiling16(workgroupSize) });
+            break;
+        case 'Shared1dTiling16':
+            shaderModule = device.createShaderModule({ code: getShared1dTiling16(workgroupSize) });
+            break;
+        default:
+            return { time: 0, verified: false };
+    }
 
-        async function runBenchmark(N, operationType, implementation, workgroupSize, tileSize) {
-            let shaderModule;
-            switch (implementation) {
-                case 'naive':
-                    shaderModule = device.createShaderModule({ code: getNaiveWGSL(workgroupSize) });
-                    break;
-                case 'gmemCoalescing':
-                    shaderModule = device.createShaderModule({ code: getGMEMCoalescingWGSL(workgroupSize, tileSize) });
-                    break;
-		case 'smemCaching':
-                    shaderModule = device.createShaderModule({ code: getSMEMCacheBlockingWGSL(workgroupSize, tileSize) });
-                    break;
-	         case 'vectorized':
-                    shaderModule = device.createShaderModule({ code: getVectorizedWGSL(workgroupSize) });
-                    break;
-                // ... other cases
-                default:
-                    return { time: 0, verified: false };
-            }
+    const { bufferA, bufferB, bufferAVec4, bufferBVec4, matrixA, matrixB } = generatedMatrices[N];
+    const matrixSize = N * N;
+    const resultMatrix = new Float32Array(matrixSize);
+    const bufferC = createBuffer(resultMatrix, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
 
-            const { bufferA, bufferB, bufferAVec4, bufferBVec4, matrixA, matrixB } = generatedMatrices[N];
-            const matrixSize = N * N;
-            const resultMatrix = new Float32Array(matrixSize);
-            const bufferC = createBuffer(resultMatrix, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
+    const uniformBuffer = device.createBuffer({
+        size: 16,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    const uniformData = new ArrayBuffer(16);
+    new Uint32Array(uniformData, 0, 1)[0] = N;
+    new Float32Array(uniformData, 4, 2).set([1.0, 0.0]); // alpha = 1.0, beta = 0.0
+    device.queue.writeBuffer(uniformBuffer, 0, uniformData);
 
-            // Create uniform buffer
-            const uniformBuffer = device.createBuffer({
-                size: 16,
-                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-            });
-            const uniformData = new ArrayBuffer(16);
-            new Uint32Array(uniformData, 0, 1)[0] = N;
-            new Float32Array(uniformData, 4, 2).set([1.0, 0.0]); // alpha = 1.0, beta = 0.0
-            device.queue.writeBuffer(uniformBuffer, 0, uniformData);
+    const bindGroupLayout = device.createBindGroupLayout({
+        entries: [
+            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+            { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+            { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+        ],
+    });
 
-            const bindGroupLayout = device.createBindGroupLayout({
-                entries: [
-                    { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
-                    { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
-                    { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
-                    { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
-                ],
-            });
+    const bindGroup = device.createBindGroup({
+        layout: bindGroupLayout,
+        entries: [
+            { binding: 0, resource: { buffer: bufferA } },
+            { binding: 1, resource: { buffer: bufferB } },
+            { binding: 2, resource: { buffer: bufferC } },
+            { binding: 3, resource: { buffer: uniformBuffer } },
+        ],
+    });
+    const pipelineLayout = device.createPipelineLayout({
+        bindGroupLayouts: [bindGroupLayout],
+    });
 
-            const bindGroup = device.createBindGroup({
-                layout: bindGroupLayout,
-                entries: [
-                    { binding: 0, resource: { buffer: bufferA } },
-                    { binding: 1, resource: { buffer: bufferB } },
-                    { binding: 2, resource: { buffer: bufferC } },
-                    { binding: 3, resource: { buffer: uniformBuffer } },
-                ],
-            });
-             const pipelineLayout = device.createPipelineLayout({
-                bindGroupLayouts: [bindGroupLayout],
-            });
+    const computePipeline = device.createComputePipeline({
+        layout: pipelineLayout,
+        compute: {
+            module: shaderModule,
+            entryPoint: "main",
+        },
+    });
 
-            const computePipeline = device.createComputePipeline({
-                layout: pipelineLayout,
-                compute: {
-                    module: shaderModule,
-                    entryPoint: "main",
-                },
-            });
+    const commandEncoder = device.createCommandEncoder();
+    const passEncoder = commandEncoder.beginComputePass();
+    passEncoder.setPipeline(computePipeline);
+    passEncoder.setBindGroup(0, bindGroup);
 
-            const commandEncoder = device.createCommandEncoder();
-            const passEncoder = commandEncoder.beginComputePass();
-            passEncoder.setPipeline(computePipeline);
-            passEncoder.setBindGroup(0, bindGroup);
-            const [x, y] = workgroupSize.split(',').map(Number);
-            passEncoder.dispatchWorkgroups(Math.ceil(N / x), Math.ceil(N / y));
-            passEncoder.end();
+    if (implementation.includes('1dTiling')) {
+        const workgroupSizeX = parseInt(workgroupSize);
+        const totalElements = N * N;
+        const numWorkgroups = Math.ceil(totalElements / workgroupSizeX);
+        passEncoder.dispatchWorkgroups(numWorkgroups);
+    } else {
+        const [x, y] = workgroupSize.split(',').map(Number);
+        passEncoder.dispatchWorkgroups(Math.ceil(N / x), Math.ceil(N / y));
+    }
+    passEncoder.end();
 
-            const startTime = performance.now();
-            device.queue.submit([commandEncoder.finish()]);
-            await device.queue.onSubmittedWorkDone();
-            const endTime = performance.now();
+    const startTime = performance.now();
+    device.queue.submit([commandEncoder.finish()]);
+    await device.queue.onSubmittedWorkDone();
+    const endTime = performance.now();
 
-            // Read back the result for verification
-            const resultReadBuffer = device.createBuffer({
-                size: bufferC.size,
-                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
-            });
-            const readBackEncoder = device.createCommandEncoder();
-            readBackEncoder.copyBufferToBuffer(bufferC, 0, resultReadBuffer, 0, bufferC.size);
-            device.queue.submit([readBackEncoder.finish()]);
-            await resultReadBuffer.mapAsync(GPUMapMode.READ);
-            const resultArray = new Float32Array(resultReadBuffer.getMappedRange());
+    // Read back the result for verification
+    const resultReadBuffer = device.createBuffer({
+        size: bufferC.size,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+    });
+    const readBackEncoder = device.createCommandEncoder();
+    readBackEncoder.copyBufferToBuffer(bufferC, 0, resultReadBuffer, 0, bufferC.size);
+    device.queue.submit([readBackEncoder.finish()]);
+    await resultReadBuffer.mapAsync(GPUMapMode.READ);
+    const resultArray = new Float32Array(resultReadBuffer.getMappedRange());
 
-            const isVerified = verifyMatrixMultiplication(matrixA, matrixB, resultArray, N, 1.0, 0.0);
+    const isVerified = verifyMatrixMultiplication(matrixA, matrixB, resultArray, N, 1.0, 0.0);
 
-            resultReadBuffer.unmap();
+    resultReadBuffer.unmap();
 
-            return { time: endTime - startTime, verified: isVerified };
-        }
-
+    return { time: endTime - startTime, verified: isVerified };
+}
         async function checkWebGPUSupport() {
             if (!navigator.gpu) {
                 return false;
@@ -678,7 +1100,7 @@
 
         async function performBenchmark() {
             const operationTypes = ['gemm', 'gemv'].filter(op => document.getElementById(op).checked);
-            const implementations = ['naive', 'gmemCoalescing', 'smemCaching', 'blocktiling1D', 'blocktiling2D', 'vectorizedMemAccess', 'vectorized'].filter(impl => document.getElementById(impl).checked);
+	    const implementations = ['naive', 'gmemCoalescing', 'smemCaching', 'vectorized', 'Global2dTiling8', 'Shared2dTiling8', 'Global2dTiling16', 'Shared2dTiling16', 'Global1dTiling8', 'Shared1dTiling8', 'Global1dTiling16', 'Shared1dTiling16'].filter(impl => document.getElementById(impl).checked);
             const matrixSizes = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096].filter(size => document.getElementById(`size${size}`).checked);
             const iterations = parseInt(document.getElementById('iterationNumber').value);
             const selectedWorkgroupSizes = Array.from(document.querySelectorAll('input[name="workgroupSize"]:checked')).map(cb => cb.value);
@@ -687,10 +1109,55 @@
             const results = {};
             const resultsTables = document.getElementById('resultsTables');
             resultsTables.innerHTML = ''; // Clear previous results
+ 
+                for (const implementation of implementations) {
+                let workgroupSizes;
+                let tileSizes;
 
-            for (const implementation of implementations) {
-                const workgroupSizes = ['naive', 'gmemCoalescing'].includes(implementation) ? selectedWorkgroupSizes : ['16,16'];  // Default for other methods
-                const tileSizes = implementation === 'gmemCoalescing' ? selectedTileSizes : [16];  // Only use tile sizes for GMEM Coalescing
+                switch (implementation) {
+                    case 'naive':
+                    case 'gmemCoalescing':
+                        workgroupSizes = selectedWorkgroupSizes;
+                        tileSizes = implementation === 'gmemCoalescing' ? selectedTileSizes : [16];
+                        break;
+                    case 'Global2dTiling8':
+                        workgroupSizes = ['8,8'];
+                        tileSizes = [8];
+                        break;
+                    case 'Shared2dTiling8':
+                        workgroupSizes = ['8,8'];
+                        tileSizes = [8];
+                        break;
+                    case 'Global2dTiling16':
+                        workgroupSizes = ['16,16'];
+                        tileSizes = [16];
+                        break;
+                    case 'Shared2dTiling16':
+                        workgroupSizes = ['16,16'];
+                        tileSizes = [16];
+                        break;
+                    case 'Global2dTiling32':
+                        workgroupSizes = ['32,32'];
+                        tileSizes = [32];
+                        break;
+                    case 'Shared2dTiling32':
+                        workgroupSizes = ['32,32'];
+                        tileSizes = [32];
+                        break;
+	            case 'Global1dTiling8':
+                    case 'Shared1dTiling8':
+                        workgroupSizes = ['64'];
+                        tileSizes = [8];
+                        break;
+                    case 'Global1dTiling16':
+                    case 'Shared1dTiling16':
+                        workgroupSizes = ['128'];
+                        tileSizes = [16];
+                        break;
+                    default:
+                        workgroupSizes = ['16,16'];
+                        tileSizes = [16];
+                }
 
                 for (const workgroupSize of workgroupSizes) {
                     for (const tileSize of tileSizes) {
