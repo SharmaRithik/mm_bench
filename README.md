@@ -1,6 +1,7 @@
 # WebGPU Matrix Multiplication Benchmark
 
 Try it on: https://sharmarithik.github.io/mm_bench/
+Explanation: https://sharmarithik.github.io/mm_bench/kernels/
 
 ## Matrix multiplication methods
 
