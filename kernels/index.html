@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WGSL Matrix Multiplication Kernels Explanation</title>
+    <script src="https://unpkg.com/react@17/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto px-4 py-8">
+        <h1 class="text-3xl font-bold mb-6 text-center">WGSL Matrix Multiplication Kernels Explanation</h1>
+        
+        <!-- Naive Implementation -->
+        <div class="mb-12">
+            <h2 class="text-2xl font-semibold mb-4">Naive Implementation</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div>
+                    <p class="text-gray-700 mb-4">
+                        <strong>Naive matrix multiplication:</strong> The shader uses three storage buffers for the input and output matrices. The shader accesses these buffers directly in global memory without employing any advanced caching or tiling techniques. The main computation occurs in a single loop that iterates over the shared dimension of the input matrices.
+                    </p>
+                    <p class="text-gray-700 mb-4">
+                        The shader loads individual elements from the input matrices within this loop using linear indexing. It calculates the appropriate indices based on the current thread's position (determined by the global invocation ID) and the loop iterator. As the loop progresses, the shader multiplies the corresponding elements from the two input matrices and accumulates the results.
+                    </p>
+                    <p class="text-gray-700 mb-4">
+                        After completing the loop, it applies scaling factors to the accumulated sum and the existing value in the output matrix. The final result is then returned to the output matrix using linear indexing. Before performing any calculations, the shader includes a bounds check to ensure that computations only occur for valid matrix elements. This prevents out-of-bounds memory access and ensures correct results for matrices of various sizes.
+                    </p>
+                </div>
+                <div id="naive-code-explainer"></div>
+            </div>
+        </div>
+
+        <!-- GMEM Coalescing Implementation -->
+        <div>
+            <h2 class="text-2xl font-semibold mb-4">GMEM Coalescing Implementation</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div>
+                    <p class="text-gray-700 mb-4">
+                        GMEM Coalescing: This shader follows a global memory (GMEM) coalescing approach for matrix multiplication. It uses three storage buffers for matrices A, B, and C and a uniform buffer for parameters like matrix size and scaling factors. It employs a tiling strategy to improve memory access patterns.
+                    </p>
+                    <p class="text-gray-700 mb-4">
+                        The main computation is organized into two nested loops, the outer loop iterates over tiles of a specified size, while the inner loop processes elements within each tile. This structure optimizes memory access by promoting coalesced reads from both input matrices. For matrix A, elements are accessed in a row-major fashion (row * N + k), while for matrix B, a column-major access pattern is used (k * N + col). This approach is designed to improve memory coalescing.
+                    </p>
+                    <p class="text-gray-700 mb-4">
+                        The shader includes bounds checking to handle matrix edges correctly. After computing the dot product sum, the result is scaled and combined with the existing value in matrix C, then written back to global memory.
+                    </p>
+                </div>
+                <div id="gmem-code-explainer"></div>
+            </div>
+        </div>
+    </div>
+
+    <script type="text/babel">
+        const CodeBlock = ({ code, className }) => (
+            <pre className={`p-2 rounded-md overflow-x-auto text-xs ${className}`}>
+                <code>{code}</code>
+            </pre>
+        );
+
+        const NaiveCodeExplainer = () => {
+            return (
+                <div className="max-w-4xl mx-auto p-4 bg-gray-100 font-mono">
+                    <div className="bg-gray-200 p-2 text-center mb-4 rounded">
+                        <h2 className="text-lg font-bold">getNaiveWGSL(workgroupSize)</h2>
+                    </div>
+                    <div className="grid grid-cols-3 gap-4 mb-4">
+                        <div className="col-span-2 bg-orange-200 p-2 rounded">
+                            <h3 className="font-bold mb-2">Bindings</h3>
+                            <CodeBlock code={`
+@binding(0) var<storage, read> matrixA : array<f32>
+@binding(1) var<storage, read> matrixB : array<f32>
+@binding(2) var<storage, read_write> matrixC : array<f32>
+@binding(3) var<uniform> uniforms : Uniforms
+                            `} className="bg-orange-100" />
+                        </div>
+                        <div className="bg-green-200 p-2 rounded">
+                            <h3 className="font-bold mb-2">Uniforms</h3>
+                            <CodeBlock code={`
+struct Uniforms {
+  N : u32,
+  alpha : f32,
+  beta : f32,
+}
+                            `} className="bg-green-100" />
+                        </div>
+                    </div>
+                    <div className="bg-blue-200 p-2 rounded mb-4">
+                        <h3 className="font-bold mb-2">main() Compute Function</h3>
+                        <CodeBlock code={`
+@compute @workgroup_size(x, y)
+fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
+  let row = global_id.y;
+  let col = global_id.x;
+  if (row < uniforms.N && col < uniforms.N) {
+    var sum = 0.0;
+    for (var i = 0u; i < uniforms.N; i = i + 1u) {
+      sum = sum + matrixA[row * uniforms.N + i] * matrixB[i * uniforms.N + col];
+    }
+    matrixC[row * uniforms.N + col] = uniforms.alpha * sum +
+      uniforms.beta * matrixC[row * uniforms.N + col];
+  }
+}
+                        `} className="bg-blue-100" />
+                    </div>
+                </div>
+            );
+        };
+
+        const GMEMCodeExplainer = () => {
+            const tileSize = 16; // Default tile size
+            return (
+                <div className="max-w-4xl mx-auto p-4 bg-gray-100 font-mono">
+                    <div className="bg-gray-200 p-2 text-center mb-4 rounded">
+                        <h2 className="text-lg font-bold">getGMEMCoalescingWGSL(workgroupSize, tileSize)</h2>
+                    </div>
+                    <div className="grid grid-cols-3 gap-4 mb-4">
+                        <div className="col-span-2 bg-orange-200 p-2 rounded">
+                            <h3 className="font-bold mb-2">Bindings</h3>
+                            <CodeBlock code={`
+@group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+@group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+@group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+@group(0) @binding(3) var<uniform> uniforms : Uniforms;
+                            `} className="bg-orange-100" />
+                        </div>
+                        <div className="bg-green-200 p-2 rounded">
+                            <h3 className="font-bold mb-2">Uniforms and Constants</h3>
+                            <CodeBlock code={`
+struct Uniforms {
+    N : u32,
+    alpha : f32,
+    beta : f32,
+}
+const TILE_SIZE : u32 = ${tileSize}u;
+                            `} className="bg-green-100" />
+                        </div>
+                    </div>
+                    <div className="bg-blue-200 p-2 rounded mb-4">
+                        <h3 className="font-bold mb-2">main() Compute Function</h3>
+                        <CodeBlock code={`
+@compute @workgroup_size(x, y)
+fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
+    let row = global_id.y;
+    let col = global_id.x;
+    let N = uniforms.N;
+    // Out of bounds check
+    if (row >= N || col >= N) {
+        return;
+    }
+    var sum = 0.0;
+                        `} className="bg-blue-100" />
+                    </div>
+                    <div className="bg-purple-200 p-2 rounded mb-4">
+                        <h3 className="font-bold mb-2">Tiled Computation</h3>
+                        <CodeBlock code={`
+    // Loop over tiles of size TILE_SIZE
+    for (var t = 0u; t < N; t += TILE_SIZE) {
+        // Process TILE_SIZE elements from matrixA and matrixB
+        for (var i = 0u; i < TILE_SIZE; i++) {
+            let k = t + i;
+            if (k < N) {
+                // Coalesced read from matrixA (row-major)
+                let aElement = matrixA[row * N + k];
+                // Coalesced read from matrixB (column-major)
+                let bElement = matrixB[k * N + col];
+                sum += aElement * bElement;
+            }
+        }
+    }
+                        `} className="bg-purple-100" />
+                    </div>
+                    <div className="bg-red-200 p-2 rounded mb-4">
+                        <h3 className="font-bold mb-2">Result Calculation</h3>
+                        <CodeBlock code={`
+    // Write the result back to matrixC with scaling
+    let index = row * N + col;
+    matrixC[index] = uniforms.alpha * sum + uniforms.beta * matrixC[index];
+}
+                        `} className="bg-red-100" />
+                    </div>
+                </div>
+            );
+        };
+
+        ReactDOM.render(<NaiveCodeExplainer />, document.getElementById('naive-code-explainer'));
+        ReactDOM.render(<GMEMCodeExplainer />, document.getElementById('gmem-code-explainer'));
+    </script>
+</body>
+</html>
