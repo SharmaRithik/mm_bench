@@ -1112,8 +1112,13 @@
  		    shaderModule = device.createShaderModule({ code: getVectorized8insWGSL(workgroupSize) });
     		    break;
 		case 'vectorized16ins':
-    		    shaderModule = device.createShaderModule({ code: getVectorized16insWGSL(workgroupSize) });
-    		    break;
+	            if (N < 16) {
+	                // Fall back to regular vectorized implementation for small matrices
+	                shaderModule = device.createShaderModule({ code: getVectorizedWGSL(workgroupSize) });
+	            } else {
+	                shaderModule = device.createShaderModule({ code: getVectorized16insWGSL(workgroupSize) });
+	            }
+	            break;
                 case 'sharedMemoryVectorizedTile4':
                     shaderModule = device.createShaderModule({ code: getSharedMemoryVectorizedWGSL_Tile4(workgroupSize) });
                     break;
