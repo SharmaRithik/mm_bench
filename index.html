@@ -242,6 +242,13 @@
                         <input type="checkbox" id="Global1dTiling16" value="Global1dTiling16"><label for="Global1dTiling16">Global 1D Tiling 16</label>
                         <input type="checkbox" id="Shared1dTiling16" value="Shared1dTiling16"><label for="Shared1dTiling16">Shared 1D Tiling 16</label>
 			<input type="checkbox" id="sharedMemoryVectorizedTileBatched" value="sharedMemoryVectorizedTileBatched" checked><label for="sharedMemoryVectorizedTileBatched">Shared Memory Vectorized Tile Batched</label>
+			<input type="checkbox" id="DecoupledAxis2x128" value="DecoupledAxis2x128" checked><label for="DecoupledAxis2x128">Decoupled Axis (2x128)</label>
+			<input type="checkbox" id="DecoupledAxis4x64" value="DecoupledAxis4x64" checked><label for="DecoupledAxis4x64">Decoupled Axis (4x64)</label>
+			<input type="checkbox" id="DecoupledAxis8x32" value="DecoupledAxis8x32" checked><label for="DecoupledAxis8x32">Decoupled Axis (8x32)</label>
+			<input type="checkbox" id="DecoupledAxis16x16" value="DecoupledAxis16x16" checked><label for="DecoupledAxis16x16">Decoupled Axis (16x16)</label>
+			<input type="checkbox" id="DecoupledAxis32x8" value="DecoupledAxis32x8" checked><label for="DecoupledAxis32x8">Decoupled Axis (32x8)</label>
+			<input type="checkbox" id="DecoupledAxis64x4" value="DecoupledAxis64x4" checked><label for="DecoupledAxis64x4">Decoupled Axis (64x4)</label>
+			<input type="checkbox" id="DecoupledAxis128x2" value="DecoupledAxis128x2" checked><label for="DecoupledAxis128x2">Decoupled Axis (128x2)</label>
                     </div>
                     <div style="margin-top: 10px;">
                         <button id="selectAllMethods">Select All</button>
@@ -1100,6 +1107,158 @@
                 }
             `;
         }
+
+        function getDecoupledAxisWGSL(workgroupSize, x, y) {
+            const [wx, wy] = workgroupSize.split(',').map(Number);
+            const ratio = x / y;
+        
+            if (ratio <= 2) {
+                // Original implementation that worked for 2x128, 4x64, 8x32, 16x16
+                return `
+                    @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+                    @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+                    @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+                    @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+                    
+                    struct Uniforms {
+                        N : u32,
+                        alpha : f32,
+                        beta : f32,
+                    }
+        
+                    var<workgroup> tileA: array<f32, ${x * y}>;
+                    var<workgroup> tileB: array<f32, ${x * y}>;
+        
+                    @compute @workgroup_size(${wx}, ${wy})
+                    fn main(
+                        @builtin(global_invocation_id) global_id : vec3<u32>,
+                        @builtin(local_invocation_id) local_id : vec3<u32>,
+                        @builtin(workgroup_id) group_id : vec3<u32>
+                    ) {
+                        let N = uniforms.N;
+                        let row = global_id.y;
+                        let col = global_id.x;
+                        let lid_row = local_id.y;
+                        let lid_col = local_id.x;
+                        
+                        var acc = 0.0;
+                        let numTiles = (N + ${x}u - 1u) / ${x}u;
+                        let valid = (row < N && col < N);
+                        
+                        for (var t = 0u; t < numTiles; t = t + 1u) {
+                            let tileStart = t * ${x}u;
+                            let localIndex = lid_row * ${wx}u + lid_col;
+                            
+                            tileA[localIndex] = 0.0;
+                            tileB[localIndex] = 0.0;
+                            
+                            workgroupBarrier();
+        
+                            if (valid) {
+                                if (tileStart + lid_col < N) {
+                                    tileA[localIndex] = matrixA[row * N + tileStart + lid_col];
+                                }
+                                if (tileStart + lid_row < N) {
+                                    tileB[localIndex] = matrixB[(tileStart + lid_row) * N + col];
+                                }
+                            }
+                            
+                            workgroupBarrier();
+        
+                            for (var k = 0u; k < ${x}u && tileStart + k < N; k = k + 1u) {
+                                let aVal = tileA[lid_row * ${wx}u + k];
+                                let bVal = tileB[k * ${wy}u + lid_col];
+                                acc += aVal * bVal;
+                            }
+                            
+                            workgroupBarrier();
+                        }
+        
+                        if (valid) {
+                            let index = row * N + col;
+                            matrixC[index] = uniforms.alpha * acc + uniforms.beta * matrixC[index];
+                        }
+                    }
+                `;
+            } else {
+                // New implementation for larger ratios (32x8, 64x4, 128x2)
+                const blockSize = 16; // Use a smaller block size for large ratios
+                return `
+                    @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+                    @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+                    @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+                    @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+                    
+                    struct Uniforms {
+                        N : u32,
+                        alpha : f32,
+                        beta : f32,
+                    }
+        
+                    var<workgroup> tileA: array<array<f32, ${blockSize}>, ${blockSize}>;
+                    var<workgroup> tileB: array<array<f32, ${blockSize}>, ${blockSize}>;
+        
+                    @compute @workgroup_size(${wx}, ${wy})
+                    fn main(
+                        @builtin(global_invocation_id) global_id : vec3<u32>,
+                        @builtin(local_invocation_id) local_id : vec3<u32>,
+                        @builtin(workgroup_id) group_id : vec3<u32>
+                    ) {
+                        let N = uniforms.N;
+                        let baseRow = global_id.y;
+                        let baseCol = global_id.x;
+                        let lid_row = local_id.y;
+                        let lid_col = local_id.x;
+        
+                        if (baseRow >= N || baseCol >= N) {
+                            return;
+                        }
+        
+                        var acc = 0.0;
+                        let numTiles = (N + ${blockSize}u - 1u) / ${blockSize}u;
+        
+                        for (var t = 0u; t < numTiles; t = t + 1u) {
+                            let tileStart = t * ${blockSize}u;
+        
+                            // Load tiles in a blocked fashion
+                            for (var i = 0u; i < ${blockSize}u; i = i + 1u) {
+                                let loadRow = baseRow;
+                                let loadCol = tileStart + i;
+                                
+                                if (loadCol < N) {
+                                    tileA[lid_row][i] = matrixA[loadRow * N + loadCol];
+                                } else {
+                                    tileA[lid_row][i] = 0.0;
+                                }
+        
+                                let loadBCol = baseCol;
+                                let loadBRow = tileStart + i;
+                                
+                                if (loadBRow < N) {
+                                    tileB[i][lid_col] = matrixB[loadBRow * N + loadBCol];
+                                } else {
+                                    tileB[i][lid_col] = 0.0;
+                                }
+                            }
+        
+                            workgroupBarrier();
+        
+                            // Compute on the block
+                            for (var k = 0u; k < ${blockSize}u && tileStart + k < N; k = k + 1u) {
+                                acc += tileA[lid_row][k] * tileB[k][lid_col];
+                            }
+        
+                            workgroupBarrier();
+                        }
+        
+                        // Write result
+                        let outIndex = baseRow * N + baseCol;
+                        matrixC[outIndex] = uniforms.alpha * acc + uniforms.beta * matrixC[outIndex];
+                    }
+                `;
+            }
+        }
+
         function getGlobalTiledWGSL8x8(workgroupSize) {
             return getTiledWGSL(workgroupSize, 8, false);
         }
@@ -1148,6 +1307,34 @@
             return get1dTiledWGSL(workgroupSize, 16, true);
         }
         
+        function getDecoupledAxis2x128WGSL(workgroupSize) {
+            return getDecoupledAxisWGSL(workgroupSize, 2, 128);
+        }
+        
+        function getDecoupledAxis4x64WGSL(workgroupSize) {
+            return getDecoupledAxisWGSL(workgroupSize, 4, 64);
+        }
+        
+        function getDecoupledAxis8x32WGSL(workgroupSize) {
+            return getDecoupledAxisWGSL(workgroupSize, 8, 32);
+        }
+        
+        function getDecoupledAxis16x16WGSL(workgroupSize) {
+            return getDecoupledAxisWGSL(workgroupSize, 16, 16);
+        }
+        
+        function getDecoupledAxis32x8WGSL(workgroupSize) {
+            return getDecoupledAxisWGSL(workgroupSize, 32, 8);
+        }
+        
+        function getDecoupledAxis64x4WGSL(workgroupSize) {
+            return getDecoupledAxisWGSL(workgroupSize, 64, 4);
+        }
+        
+        function getDecoupledAxis128x2WGSL(workgroupSize) {
+            return getDecoupledAxisWGSL(workgroupSize, 128, 2);
+        }
+
         function verifyMatrixMultiplication(matrixA, matrixB, resultMatrix, N, alpha, beta, numChecks = 20) {
             for (let check = 0; check < numChecks; check++) {
                 const row = Math.floor(Math.random() * N);
@@ -1249,6 +1436,41 @@
                         code: get1dTiledWGSL(parseInt(workgroupSize), 16, true) 
                     });
                     break;
+               case 'DecoupledAxis2x128':
+                   shaderModule = device.createShaderModule({ 
+                       code: getDecoupledAxis2x128WGSL(workgroupSize) 
+                   });
+                   break;
+               case 'DecoupledAxis4x64':
+                   shaderModule = device.createShaderModule({ 
+                       code: getDecoupledAxis4x64WGSL(workgroupSize) 
+                   });
+                   break;
+               case 'DecoupledAxis8x32':
+                   shaderModule = device.createShaderModule({ 
+                       code: getDecoupledAxis8x32WGSL(workgroupSize) 
+                   });
+                   break;
+               case 'DecoupledAxis16x16':
+                   shaderModule = device.createShaderModule({ 
+                       code: getDecoupledAxis16x16WGSL(workgroupSize) 
+                   });
+                   break;
+               case 'DecoupledAxis32x8':
+                   shaderModule = device.createShaderModule({ 
+                       code: getDecoupledAxis32x8WGSL(workgroupSize) 
+                   });
+                   break;
+               case 'DecoupledAxis64x4':
+                   shaderModule = device.createShaderModule({ 
+                       code: getDecoupledAxis64x4WGSL(workgroupSize) 
+                   });
+                   break;
+               case 'DecoupledAxis128x2':
+                   shaderModule = device.createShaderModule({ 
+                       code: getDecoupledAxis128x2WGSL(workgroupSize) 
+                   });
+                   break;
                 default:
                     return { time: 0, verified: false };
             }
@@ -1385,7 +1607,34 @@
 
         async function performBenchmark() {
             const operationTypes = ['gemm', 'gemv'].filter(op => document.getElementById(op).checked);
-	    const implementations = ['naive', 'gmemCoalescing', 'smemCaching', 'tiledDotProduct', 'vectorized', 'vectorized8ins', 'vectorized16ins', 'sharedMemoryVectorizedTile4', 'sharedMemoryVectorizedTile8', 'sharedMemoryVectorizedTile16', 'sharedMemoryVectorizedTile32', 'Global2dTiling8', 'Shared2dTiling8', 'Global2dTiling16', 'Shared2dTiling16', 'Global1dTiling8', 'Shared1dTiling8', 'Global1dTiling16', 'Shared1dTiling16', 'sharedMemoryVectorizedTileBatched'].filter(impl => document.getElementById(impl).checked);
+	    const implementations = [
+	    'naive', 
+	    'gmemCoalescing', 
+	    'smemCaching', 
+	    'tiledDotProduct',
+	    'vectorized', 
+	    'vectorized8ins', 
+	    'vectorized16ins',
+	    'sharedMemoryVectorizedTile4', 
+	    'sharedMemoryVectorizedTile8', 
+	    'sharedMemoryVectorizedTile16', 
+	    'sharedMemoryVectorizedTile32', 
+	    'Global2dTiling8', 
+	    'Shared2dTiling8', 
+	    'Global2dTiling16', 
+	    'Shared2dTiling16', 
+	    'Global1dTiling8', 
+	    'Shared1dTiling8', 
+	    'Global1dTiling16', 
+	    'Shared1dTiling16', 
+	    'sharedMemoryVectorizedTileBatched',     
+	    'DecoupledAxis2x128',
+    	    'DecoupledAxis4x64',
+            'DecoupledAxis8x32',
+            'DecoupledAxis16x16',
+            'DecoupledAxis32x8',
+            'DecoupledAxis64x4',
+            'DecoupledAxis128x2'].filter(impl => document.getElementById(impl).checked);
             const matrixSizes = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096].filter(size => document.getElementById(`size${size}`).checked);
             const iterations = parseInt(document.getElementById('iterationNumber').value);
             const selectedWorkgroupSizes = Array.from(document.querySelectorAll('input[name="workgroupSize"]:checked')).map(cb => cb.value);
@@ -1458,6 +1707,16 @@
 		    case 'sharedMemoryVectorizedTileBatched':
                         workgroupSizes = ['16,16'];
                         tileSizes = [16];
+                        break;
+                    case 'DecoupledAxis2x128':
+                    case 'DecoupledAxis4x64':
+                    case 'DecoupledAxis8x32':
+                    case 'DecoupledAxis16x16':
+                    case 'DecoupledAxis32x8':
+                    case 'DecoupledAxis64x4':
+                    case 'DecoupledAxis128x2':
+                        workgroupSizes = ['16,16']; // Default workgroup size
+                        tileSizes = [16]; // Default tile size
                         break;
                     default:
                         workgroupSizes = ['16,16'];
