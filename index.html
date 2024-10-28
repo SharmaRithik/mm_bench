@@ -225,6 +225,7 @@
                         <input type="checkbox" id="naive" value="naive" checked><label for="naive">Naive</label>
                         <input type="checkbox" id="gmemCoalescing" value="gmemCoalescing" checked><label for="gmemCoalescing">GMEM Coalescing</label>
                         <input type="checkbox" id="smemCaching" value="smemCaching" checked><label for="smemCaching">SMEM Caching</label>
+			<input type="checkbox" id="tiledDotProduct" value="tiledDotProduct" checked><label for="tiledDotProduct">Tiled Dot Product</label>
 			<input type="checkbox" id="vectorized" value="vectorized" checked><label for="vectorized">Vectorized</label>
 			<input type="checkbox" id="vectorized8ins" value="vectorized8ins" checked><label for="vectorized8ins">Vectorized (8 ins)</label>
 			<input type="checkbox" id="vectorized16ins" value="vectorized16ins" checked><label for="vectorized16ins">Vectorized (16 ins)</label>
@@ -491,6 +492,84 @@
                     if (row < uniforms.N && col < uniforms.N) {
                         let index = row * uniforms.N + col;
                         matrixC[index] = uniforms.alpha * sum + uniforms.beta * matrixC[index];
+                    }
+                }
+            `;
+        }
+
+        function getTiledDotProductWGSL(workgroupSize) {
+            const [x, y] = workgroupSize.split(',').map(Number);
+            return `
+                @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+                @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+                @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+                @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+                
+                struct Uniforms {
+                    N : u32,
+                    alpha : f32,
+                    beta : f32,
+                }
+        
+                const TILE_SIZE = ${x}u;  // Match tile size to workgroup size
+                const VECTOR_SIZE = 4u;
+        
+                var<workgroup> tileA: array<array<f32, ${x}>, ${x}>;
+                var<workgroup> tileB: array<array<f32, ${x}>, ${x}>;
+        
+                fn load_tile(global_row: u32, global_col: u32, N: u32, isA: bool) -> f32 {
+                    if (isA) {
+                        if (global_row < N && global_col < N) {
+                            return matrixA[global_row * N + global_col];
+                        }
+                    } else {
+                        if (global_row < N && global_col < N) {
+                            return matrixB[global_row * N + global_col];
+                        }
+                    }
+                    return 0.0;
+                }
+        
+                @compute @workgroup_size(${x}, ${y})
+                fn main(
+                    @builtin(global_invocation_id) global_id: vec3<u32>,
+                    @builtin(local_invocation_id) local_id: vec3<u32>,
+                    @builtin(workgroup_id) group_id: vec3<u32>
+                ) {
+                    let N = uniforms.N;
+        
+                    let row = global_id.y;
+                    let col = global_id.x;
+                    let lid_row = local_id.y;
+                    let lid_col = local_id.x;
+        
+                    var acc = 0.0;
+        
+                    // Process matrix in tiles
+                    for (var t = 0u; t < N; t += TILE_SIZE) {
+                        // Load tiles collaboratively
+                        let tileA_row = row;
+                        let tileA_col = t + lid_col;
+                        let tileB_row = t + lid_row;
+                        let tileB_col = col;
+        
+                        tileA[lid_row][lid_col] = load_tile(tileA_row, tileA_col, N, true);
+                        tileB[lid_row][lid_col] = load_tile(tileB_row, tileB_col, N, false);
+        
+                        workgroupBarrier();
+        
+                        // Compute dot product for this tile
+                        for (var k = 0u; k < TILE_SIZE; k++) {
+                            acc += tileA[lid_row][k] * tileB[k][lid_col];
+                        }
+        
+                        workgroupBarrier();
+                    }
+        
+                    // Write result
+                    if (row < N && col < N) {
+                        let idx = row * N + col;
+                        matrixC[idx] = uniforms.alpha * acc + uniforms.beta * matrixC[idx];
                     }
                 }
             `;
@@ -1105,6 +1184,9 @@
                 case 'smemCaching':
                     shaderModule = device.createShaderModule({ code: getSMEMCacheBlockingWGSL(workgroupSize, tileSize) });
                     break;
+		case 'tiledDotProduct':
+    		    shaderModule = device.createShaderModule({ code: getTiledDotProductWGSL(workgroupSize) });
+    		    break;
                 case 'vectorized':
                     shaderModule = device.createShaderModule({ code: getVectorizedWGSL(workgroupSize) });
                     break;
@@ -1303,7 +1385,7 @@
 
         async function performBenchmark() {
             const operationTypes = ['gemm', 'gemv'].filter(op => document.getElementById(op).checked);
-	    const implementations = ['naive', 'gmemCoalescing', 'smemCaching', 'vectorized', 'vectorized8ins', 'vectorized16ins', 'sharedMemoryVectorizedTile4', 'sharedMemoryVectorizedTile8', 'sharedMemoryVectorizedTile16', 'sharedMemoryVectorizedTile32', 'Global2dTiling8', 'Shared2dTiling8', 'Global2dTiling16', 'Shared2dTiling16', 'Global1dTiling8', 'Shared1dTiling8', 'Global1dTiling16', 'Shared1dTiling16', 'sharedMemoryVectorizedTileBatched'].filter(impl => document.getElementById(impl).checked);
+	    const implementations = ['naive', 'gmemCoalescing', 'smemCaching', 'tiledDotProduct', 'vectorized', 'vectorized8ins', 'vectorized16ins', 'sharedMemoryVectorizedTile4', 'sharedMemoryVectorizedTile8', 'sharedMemoryVectorizedTile16', 'sharedMemoryVectorizedTile32', 'Global2dTiling8', 'Shared2dTiling8', 'Global2dTiling16', 'Shared2dTiling16', 'Global1dTiling8', 'Shared1dTiling8', 'Global1dTiling16', 'Shared1dTiling16', 'sharedMemoryVectorizedTileBatched'].filter(impl => document.getElementById(impl).checked);
             const matrixSizes = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096].filter(size => document.getElementById(`size${size}`).checked);
             const iterations = parseInt(document.getElementById('iterationNumber').value);
             const selectedWorkgroupSizes = Array.from(document.querySelectorAll('input[name="workgroupSize"]:checked')).map(cb => cb.value);
