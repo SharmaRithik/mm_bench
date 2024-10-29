@@ -162,6 +162,29 @@
         #benchmarkChart {
             height: 300px;
         }
+	        .summary-tile {
+            flex: 0 0 100%;
+        }
+        #bestMethodsTable {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        #bestMethodsTable th, #bestMethodsTable td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        #bestMethodsTable th {
+            background-color: #f8f9fa;
+            font-weight: bold;
+        }
+        #bestMethodsTable tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        #bestMethodsTable tr:hover {
+            background-color: #f5f5f5;
+        }
     }
     </style>
 </head>
@@ -232,16 +255,16 @@
                         <input type="checkbox" id="sharedMemoryVectorizedTile4" value="sharedMemoryVectorizedTile4" checked><label for="sharedMemoryVectorizedTile4">Shared Memory Vectorized (Tile 4x4)</label>
                         <input type="checkbox" id="sharedMemoryVectorizedTile8" value="sharedMemoryVectorizedTile8" checked><label for="sharedMemoryVectorizedTile8">Shared Memory Vectorized (Tile 8x8)</label>
                         <input type="checkbox" id="sharedMemoryVectorizedTile16" value="sharedMemoryVectorizedTile16" checked><label for="sharedMemoryVectorizedTile16">Shared Memory Vectorized (Tile 16x16)</label>
-                        <input type="checkbox" id="sharedMemoryVectorizedTile32" value="sharedMemoryVectorizedTile32" checked><label for="sharedMemoryVectorizedTile32">Shared Memory Vectorized (Tile 32x32)</label>
+                        <input type="checkbox" id="sharedMemoryVectorizedTile32" value="sharedMemoryVectorizedTile32"><label for="sharedMemoryVectorizedTile32">Shared Memory Vectorized (Tile 32x32)</label>
 			<input type="checkbox" id="Global2dTiling8" value="Global2dTiling8" checked><label for="Global2dTiling8">Global 2D Tiling 8x8</label>
 			<input type="checkbox" id="Shared2dTiling8" value="Shared2dTiling8" checked><label for="Shared2dTiling8">Shared 2D Tiling 8x8</label>
                         <input type="checkbox" id="Global2dTiling16" value="Global2dTiling16" checked><label for="Global2dTiling16">Global 2D Tiling 16x16</label>
                         <input type="checkbox" id="Shared2dTiling16" value="Shared2dTiling16" checked><label for="Shared2dTiling16">Shared 2D Tiling 16x16</label>
-		        <input type="checkbox" id="Global1dTiling8" value="Global1dTiling8"><label for="Global1dTiling8">Global 1D Tiling 8</label>
+		        <input type="checkbox" id="Global1dTiling8" value="Global1dTiling8" checked><label for="Global1dTiling8">Global 1D Tiling 8</label>
                         <input type="checkbox" id="Shared1dTiling8" value="Shared1dTiling8"><label for="Shared1dTiling8">Shared 1D Tiling 8</label>
-                        <input type="checkbox" id="Global1dTiling16" value="Global1dTiling16"><label for="Global1dTiling16">Global 1D Tiling 16</label>
+                        <input type="checkbox" id="Global1dTiling16" value="Global1dTiling16" checked><label for="Global1dTiling16">Global 1D Tiling 16</label>
                         <input type="checkbox" id="Shared1dTiling16" value="Shared1dTiling16"><label for="Shared1dTiling16">Shared 1D Tiling 16</label>
-			<input type="checkbox" id="sharedMemoryVectorizedTileBatched" value="sharedMemoryVectorizedTileBatched" checked><label for="sharedMemoryVectorizedTileBatched">Shared Memory Vectorized Tile Batched</label>
+			<input type="checkbox" id="sharedMemoryVectorizedTileBatched" value="sharedMemoryVectorizedTileBatched"><label for="sharedMemoryVectorizedTileBatched">Shared Memory Vectorized Tile Batched</label>
 			<input type="checkbox" id="DecoupledAxis2x128" value="DecoupledAxis2x128" checked><label for="DecoupledAxis2x128">Decoupled Axis (2x128)</label>
 			<input type="checkbox" id="DecoupledAxis4x64" value="DecoupledAxis4x64" checked><label for="DecoupledAxis4x64">Decoupled Axis (4x64)</label>
 			<input type="checkbox" id="DecoupledAxis8x32" value="DecoupledAxis8x32" checked><label for="DecoupledAxis8x32">Decoupled Axis (8x32)</label>
@@ -310,6 +333,24 @@
                     </div>
                 </div>
             </div>
+	        <div class="row">
+                <div class="tile summary-tile">
+                    <div class="tile-header">Best Methods Summary</div>
+                    <table id="bestMethodsTable">
+                        <thead>
+                            <tr>
+                                <th>Matrix Size</th>
+                                <th>Best Method</th>
+                                <th>Time (ms)</th>
+                                <th>GFLOPS</th>
+                                <th>Tuning Parameters</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </div>
     <script type="module">
         let device;
@@ -371,6 +412,50 @@
             generateButton.textContent = "Generated";
             generateButton.style.backgroundColor = "green";
             generateButton.style.color = "white";
+        }
+
+        function updateBestMethodsSummary(results) {
+            const bestMethodsTable = document.getElementById("bestMethodsTable").getElementsByTagName('tbody')[0];
+            bestMethodsTable.innerHTML = ''; // Clear existing rows
+    
+            // Get all unique matrix sizes
+            const matrixSizes = [...new Set(Object.values(results)
+                .flatMap(implementationResults => implementationResults
+                    .map(result => result.size)))].sort((a, b) => a - b);
+    
+            matrixSizes.forEach(size => {
+                // Find the best result for this size across all implementations
+                let bestResult = {
+                    time: Infinity,
+                    implementation: '',
+                    gflops: 0,
+                    tuningParameters: ''
+                };
+    
+                Object.entries(results).forEach(([implementation, implementationResults]) => {
+                    const result = implementationResults.find(r => r.size === size);
+                    if (result && result.time < bestResult.time) {
+                        bestResult = {
+                            time: result.time,
+                            implementation: implementation.split('-')[0], // Get base implementation name
+                            gflops: result.gflops,
+                            tuningParameters: result.tuningParameters
+                        };
+                    }
+                });
+    
+                // Only add row if we found results for this size
+                if (bestResult.time !== Infinity) {
+                    const row = bestMethodsTable.insertRow();
+                    row.innerHTML = `
+                        <td>${size}x${size}</td>
+                        <td>${bestResult.implementation}</td>
+                        <td>${bestResult.time.toFixed(2)}</td>
+                        <td>${bestResult.gflops.toFixed(2)}</td>
+                        <td>${bestResult.tuningParameters}</td>
+                    `;
+                }
+            });
         }
 
         function getNaiveWGSL(workgroupSize) {
@@ -1988,6 +2073,7 @@
 
         benchmarkChart.update();
         });
+	updateBestMethodsSummary(results);
     }
         function downloadResults() {
             const tables = document.querySelectorAll('#resultsTables table');
