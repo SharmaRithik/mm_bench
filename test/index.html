@@ -235,16 +235,10 @@
                     let row_offset = row * N;
                     var sum: f32 = 0.0;
 
-                    for (var k = 0u; k < N; k = k + 64u) {
-                        var chunk_sum: f32 = 0.0;
-                        let end = min(k + 64u, N);
-
-                        for (var j = k; j < end; j = j + 1u) {
-                            let a = matrixA[row_offset + j];
-                            let b = matrixB[j * N + col];
-                            chunk_sum = chunk_sum + (a * b);
-                        }
-                        sum = sum + chunk_sum;
+                    for (var k = 0u; k < N; k = k + 1u) {
+                        let a = matrixA[row_offset + k];
+                        let b = matrixB[k * N + col];
+                        sum = sum + a * b;
                     }
 
                     matrixC[row_offset + col] = uniforms.alpha * sum + uniforms.beta * matrixC[row_offset + col];
