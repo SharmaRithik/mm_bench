@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Matrix Multiplication Benchmark</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.1/chart.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -99,6 +101,22 @@
             color: red;
             font-weight: bold;
         }
+        .performance-tables {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .performance-table {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .performance-table h3 {
+            text-align: center;
+            margin-top: 0;
+        }
     </style>
 </head>
 <body>
@@ -148,6 +166,11 @@
                 <canvas id="benchmarkChart"></canvas>
             </div>
         </div>
+
+        <div class="tile">
+            <h3>Top Performers by Matrix Size</h3>
+            <div id="topPerformersRoot"></div>
+        </div>
     </div>
 
     <script>
@@ -157,7 +180,7 @@
             '8,8', '16,16', '32,32'  // Square workgroups for naive implementation
         ];
         const decoupledWorkgroupSizes = [
-		'2,128', '4,64', '8,32', '16,16', '32,8', '64,4', '128,2'
+            '2,128', '4,64', '8,32', '16,16', '32,8', '64,4', '128,2'
         ];
 
         let device;
@@ -168,7 +191,61 @@
             decoupled: []
         };
 
-	// Naive WGSL implementation
+        // TopPerformersTable React Component
+        const TopPerformersTable = () => {
+            const getTopPerformers = (results) => {
+                const sizes = [...new Set([...results.naive, ...results.decoupled].map(r => r.size))];
+                
+                return sizes.reduce((acc, size) => {
+                    // Combine and process results for this size
+                    const sizeResults = [
+                        ...results.naive.filter(r => r.size === size).map(r => ({...r, impl: 'naive'})),
+                        ...results.decoupled.filter(r => r.size === size).map(r => ({...r, impl: 'decoupled'}))
+                    ];
+                    
+                    // Sort by execution time
+                    const sorted = sizeResults.sort((a, b) => a.time - b.time);
+                    acc[size] = sorted.slice(0, 3);
+                    return acc;
+                }, {});
+            };
+
+            return React.createElement('div', { className: 'performance-tables' },
+                ['Best Performance', 'Second Best', 'Third Best'].map((title, index) => 
+                    React.createElement('div', { key: title, className: 'performance-table' },
+                        React.createElement('h3', null, title),
+                        React.createElement('table', null,
+                            React.createElement('thead', null,
+                                React.createElement('tr', null, [
+                                    React.createElement('th', { key: 'size' }, 'Size'),
+                                    React.createElement('th', { key: 'method' }, 'Method'),
+                                    React.createElement('th', { key: 'time' }, 'Time (ms)')
+                                ])
+                            ),
+                            React.createElement('tbody', null,
+                                Object.entries(getTopPerformers(results)).map(([size, performers]) =>
+                                    React.createElement('tr', { key: size }, [
+                                        React.createElement('td', { key: 'size' }, `${size}x${size}`),
+                                        React.createElement('td', { key: 'method' },
+                                            performers[index]?.impl ? 
+                                                `${performers[index].impl} (${performers[index].workgroupSize.replace(',', 'x')})` :
+                                                'N/A'
+                                        ),
+                                        React.createElement('td', { key: 'time' },
+                                            performers[index]?.time ? 
+                                                performers[index].time.toFixed(2) :
+                                                'N/A'
+                                        )
+                                    ])
+                                )
+                            )
+                        )
+                    )
+                )
+            );
+        };
+
+        // Naive WGSL implementation
         function getNaiveWGSL(workgroupSize) {
             const [wx, wy] = workgroupSize.split(',').map(Number);
             return `
@@ -313,7 +390,7 @@
             const shaderModule = device.createShaderModule({
                 code: implementation === 'naive'
                     ? getNaiveWGSL(workgroupSize)
-                    : getNaiveDecoupledWGSL(workgroupSize)
+		    : getNaiveDecoupledWGSL(workgroupSize)
             });
 
             const { bufferA, bufferB, matrixA, matrixB } = generatedMatrices[N];
@@ -395,8 +472,8 @@
                 workgroupSize: workgroupSize
             };
         }
-	
-	// Perform benchmark
+
+        // Perform benchmark
         async function performBenchmark() {
             const iterations = parseInt(document.getElementById('iterations').value);
             const selectedSizes = Array.from(document.querySelectorAll('#sizeCheckboxes input:checked'))
@@ -512,6 +589,11 @@
             }
 
             updateChart();
+
+            // Update the performance tables
+            const root = document.getElementById('topPerformersRoot');
+            const reactRoot = ReactDOM.createRoot(root);
+            reactRoot.render(React.createElement(TopPerformersTable));
         }
 
         // Update chart
@@ -522,7 +604,6 @@
                 benchmarkChart.destroy();
             }
 
-            // Group results by implementation and workgroup size
             const datasets = [];
             const colors = [
                 'rgb(75, 192, 192)', 'rgb(255, 99, 132)', 'rgb(54, 162, 235)',
