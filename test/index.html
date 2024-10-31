@@ -440,7 +440,6 @@
                 var<workgroup> tileA: array<array<f32, TILE_ROWS>, TILE_COLS>;
                 var<workgroup> tileB: array<array<f32, TILE_ROWS>, TILE_COLS>;
         
-                // Load matrix element with bounds checking
                 fn loadMatrixElement(row: u32, col: u32, N: u32, isA: bool) -> f32 {
                     if (row < N && col < N) {
                         if (isA) {
@@ -465,10 +464,8 @@
         
                     var sum = 0.0;
         
-                    // Iterate through tiles
-                    let tileDim = min(TILE_ROWS, TILE_COLS);  // Use the smaller tile dimension for iteration
+                    let tileDim = min(TILE_ROWS, TILE_COLS);
                     for (var t = 0u; t < N; t += tileDim) {
-                        // Load tiles into shared memory
                         let tileA_row = row;
                         let tileA_col = t + localCol;
                         let tileB_row = t + localRow;
@@ -477,19 +474,13 @@
                         tileA[localRow][localCol] = loadMatrixElement(tileA_row, tileA_col, N, true);
                         tileB[localRow][localCol] = loadMatrixElement(tileB_row, tileB_col, N, false);
         
-                        // Ensure all threads have loaded their elements into shared memory
                         workgroupBarrier();
         
-                        // Compute partial dot product for this tile
                         for (var k = 0u; k < tileDim; k++) {
                             sum += tileA[localRow][k] * tileB[k][localCol];
                         }
-        
-                        // Synchronize before loading the next tile
                         workgroupBarrier();
                     }
-        
-                    // Write result back to matrix C, applying alpha and beta
                     if (row < N && col < N) {
                         let index = row * N + col;
                         matrixC[index] = uniforms.alpha * sum + uniforms.beta * matrixC[index];
