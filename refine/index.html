@@ -259,16 +259,31 @@
     // Generate tile sizes for a given workgroup size
     function generateTileSizes(workgroupSize) {
         const [wx, wy] = workgroupSize.split(',').map(Number);
-        const maxDim = Math.min(wx, wy);
-        const tileSizes = [];
-
-        // Generate powers of 2 up to the workgroup size
-        for (let i = 0; Math.pow(2, i) <= maxDim; i++) {
-            const size = Math.pow(2, i);
-            tileSizes.push(`${size},${size}`);
+        const tileSizes = new Set();
+        
+        // Get maximum allowed power of 2 for each dimension
+        const maxPowerX = Math.floor(Math.log2(wx));
+        const maxPowerY = Math.floor(Math.log2(wy));
+        
+        // Generate all possible rectangular combinations
+        for (let px = 0; px <= maxPowerX; px++) {
+            for (let py = 0; py <= maxPowerY; py++) {
+                const tileX = Math.pow(2, px);
+                const tileY = Math.pow(2, py);
+                tileSizes.add(`${tileX},${tileY}`);
+            }
         }
+    
+        return Array.from(tileSizes);
+    }
 
-        return tileSizes;
+    // Validation function for tile size compatibility
+    function isTileSizeCompatibleWithWorkgroup(tileSize, workgroupSize) {
+        const [tileWidth, tileHeight] = tileSize.split(',').map(Number);
+        const [workgroupWidth, workgroupHeight] = workgroupSize.split(',').map(Number);
+        
+        // Tile dimensions must be less than or equal to workgroup dimensions
+        return tileWidth <= workgroupWidth && tileHeight <= workgroupHeight;
     }
 
     // Update tile size options based on selected workgroup
@@ -338,6 +353,7 @@
     function getNaiveDecoupledSharedMemoryWGSL(workgroupSize, tileSize) {
         const [workgroupRows, workgroupCols] = workgroupSize.split(',').map(Number);
         const [tileRows, tileCols] = tileSize.split(',').map(Number);
+        
         return `
             @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
             @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
@@ -350,54 +366,65 @@
                 beta : f32,
             }
 
-            const TILE_ROWS = ${tileRows}u;
-            const TILE_COLS = ${tileCols}u;
+            const TILE_SIZE = ${tileRows}u;  // Using square tiles for simplicity
+            const WG_SIZE = ${workgroupRows}u;  // Using square workgroups
 
-            // Shared memory tiles for matrix A and B
-            var<workgroup> tileA: array<array<f32, TILE_ROWS>, TILE_COLS>;
-            var<workgroup> tileB: array<array<f32, TILE_ROWS>, TILE_COLS>;
-
-            fn loadMatrixElement(row: u32, col: u32, N: u32, isA: bool) -> f32 {
-                if (row < N && col < N) {
-                    if (isA) {
-                        return matrixA[row * N + col];
-                    } else {
-                        return matrixB[row * N + col];
-                    }
-                }
-                return 0.0;
-            }
+            var<workgroup> tileA: array<f32, ${workgroupRows * workgroupCols}>;
+            var<workgroup> tileB: array<f32, ${workgroupRows * workgroupCols}>;
 
             @compute @workgroup_size(${workgroupRows}, ${workgroupCols})
             fn main(
                 @builtin(global_invocation_id) global_id: vec3<u32>,
-                @builtin(local_invocation_id) local_id: vec3<u32>
+                @builtin(local_invocation_id) local_id: vec3<u32>,
+                @builtin(workgroup_id) workgroup_id: vec3<u32>
             ) {
                 let N = uniforms.N;
                 let row = global_id.y;
                 let col = global_id.x;
                 let localRow = local_id.y;
                 let localCol = local_id.x;
-
+                let localIdx = localRow * WG_SIZE + localCol;
+                
                 var sum = 0.0;
+                
+                // Number of tiles needed for the full matrix multiplication
+                let numTiles = (N + TILE_SIZE - 1u) / TILE_SIZE;
 
-                let tileDim = min(TILE_ROWS, TILE_COLS);
-                for (var t = 0u; t < N; t += tileDim) {
-                    let tileA_row = row;
-                    let tileA_col = t + localCol;
-                    let tileB_row = t + localRow;
-                    let tileB_col = col;
+                for (var tile = 0u; tile < numTiles; tile = tile + 1u) {
+		// Load current tile of A and B into shared memory
+                    let tileOffset = tile * TILE_SIZE;
 
-                    tileA[localRow][localCol] = loadMatrixElement(tileA_row, tileA_col, N, true);
-                    tileB[localRow][localCol] = loadMatrixElement(tileB_row, tileB_col, N, false);
+                    // Each thread loads its corresponding element
+                    if (row < N && (tileOffset + localCol) < N) {
+                        tileA[localIdx] = matrixA[row * N + tileOffset + localCol];
+                    } else {
+                        tileA[localIdx] = 0.0;
+                    }
+
+                    if ((tileOffset + localRow) < N && col < N) {
+                        tileB[localIdx] = matrixB[(tileOffset + localRow) * N + col];
+                    } else {
+                        tileB[localIdx] = 0.0;
+                    }
 
                     workgroupBarrier();
 
-                    for (var k = 0u; k < tileDim; k++) {
-                        sum += tileA[localRow][k] * tileB[k][localCol];
+                    // Compute partial dot product using the loaded tiles
+                    if (row < N && col < N) {
+                        for (var k = 0u; k < TILE_SIZE; k = k + 1u) {
+                            let aIndex = localRow * WG_SIZE + k;
+                            let bIndex = k * WG_SIZE + localCol;
+
+                            if (tileOffset + k < N) {
+                                sum = sum + tileA[aIndex] * tileB[bIndex];
+                            }
+                        }
                     }
+
                     workgroupBarrier();
                 }
+
+                // Write final result
                 if (row < N && col < N) {
                     let index = row * N + col;
                     matrixC[index] = uniforms.alpha * sum + uniforms.beta * matrixC[index];
@@ -577,7 +604,7 @@
         };
     }
 
-    // Perform benchmark
+    // Perform benchmark with validation
     async function performBenchmark() {
         const iterations = parseInt(document.getElementById('iterations').value);
         const selectedSizes = Array.from(document.querySelectorAll('#sizeCheckboxes input:checked'))
@@ -605,6 +632,27 @@
         if (!runNaive && !runSharedMemory) {
             alert('Please select at least one kernel');
             return;
+        }
+
+        // Validate tile size compatibility with workgroups
+        const compatibleConfigs = [];
+        if (runSharedMemory) {
+            for (const workgroupSize of selectedWorkgroups) {
+                const compatibleTileSizes = selectedTileSizes.filter(tileSize =>
+                    isTileSizeCompatibleWithWorkgroup(tileSize, workgroupSize)
+                );
+                if (compatibleTileSizes.length > 0) {
+                    compatibleConfigs.push({
+                        workgroupSize,
+                        tileSizes: compatibleTileSizes
+                    });
+                }
+            }
+
+            if (compatibleConfigs.length === 0) {
+                alert('No compatible workgroup and tile size combinations found. Please adjust your selection.');
+                return;
+            }
         }
 
         results = { naive: [], sharedMemory: [] };
@@ -666,45 +714,43 @@
                 }
 
                 if (runSharedMemory) {
-                    for (const tileSize of selectedTileSizes) {
-                        // Skip if tile size is larger than workgroup size
-                        const [tileWidth] = tileSize.split(',').map(Number);
-                        const [workgroupWidth] = workgroupSize.split(',').map(Number);
-                        if (tileWidth > workgroupWidth) continue;
+                    const config = compatibleConfigs.find(c => c.workgroupSize === workgroupSize);
+                    if (config) {
+                        for (const tileSize of config.tileSizes) {
+                            // Warm-up
+                            await runBenchmark(size, workgroupSize, 'shared', tileSize);
+                            let totalTimeShared = 0;
+                            let allVerifiedShared = true;
 
-                        // Warm-up
-                        await runBenchmark(size, workgroupSize, 'shared', tileSize);
-                        let totalTimeShared = 0;
-                        let allVerifiedShared = true;
+                            for (let i = 0; i < iterations; i++) {
+                                const result = await runBenchmark(size, workgroupSize, 'shared', tileSize);
+                                totalTimeShared += result.time;
+                                allVerifiedShared = allVerifiedShared && result.verified;
+                            }
 
-                        for (let i = 0; i < iterations; i++) {
-                            const result = await runBenchmark(size, workgroupSize, 'shared', tileSize);
-                            totalTimeShared += result.time;
-                            allVerifiedShared = allVerifiedShared && result.verified;
+                            const avgTimeShared = totalTimeShared / iterations;
+                            const gflopsShared = (2 * size * size * size) / (avgTimeShared * 1e6);
+
+                            results.sharedMemory.push({
+                                implementation: 'Shared Memory',
+                                size,
+                                workgroupSize,
+                                tileSize,
+                                time: parseFloat(avgTimeShared.toFixed(2)),
+                                gflops: parseFloat(gflopsShared.toFixed(2)),
+                                verified: allVerifiedShared
+                            });
+
+                            tbody.insertRow().innerHTML = `
+                                <td>Shared Memory</td>
+                                <td>${size}x${size}</td>
+                                <td>${workgroupSize.replace(',', 'x')}</td>
+                                <td>${tileSize.replace(',', 'x')}</td>
+                                <td>${avgTimeShared.toFixed(2)}</td>
+                                <td>${gflopsShared.toFixed(2)}</td>
+                                <td>${allVerifiedShared ? '✓' : '✗'}</td>
+                            `;
                         }
-
-                        const avgTimeShared = totalTimeShared / iterations;
-                        const gflopsShared = (2 * size * size * size) / (avgTimeShared * 1e6);
-
-                        results.sharedMemory.push({
-                            implementation: 'Shared Memory',
-                            size,
-                            workgroupSize,
-                            tileSize,
-                            time: parseFloat(avgTimeShared.toFixed(2)),
-                            gflops: parseFloat(gflopsShared.toFixed(2)),
-                            verified: allVerifiedShared
-                        });
-
-                        tbody.insertRow().innerHTML = `
-                            <td>Shared Memory</td>
-                            <td>${size}x${size}</td>
-                            <td>${workgroupSize.replace(',', 'x')}</td>
-                            <td>${tileSize.replace(',', 'x')}</td>
-                            <td>${avgTimeShared.toFixed(2)}</td>
-                            <td>${gflopsShared.toFixed(2)}</td>
-                            <td>${allVerifiedShared ? '✓' : '✗'}</td>
-                        `;
                     }
                 }
             }
@@ -1018,6 +1064,6 @@
     }
 
     window.addEventListener('load', initialize);
-</script>
+    </script>
 </body>
 </html>
