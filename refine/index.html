@@ -261,17 +261,16 @@
         const [wx, wy] = workgroupSize.split(',').map(Number);
         const tileSizes = new Set();
         
-        // Get maximum allowed power of 2 for each dimension
-        const maxPowerX = Math.floor(Math.log2(wx));
-        const maxPowerY = Math.floor(Math.log2(wy));
+        // Find the minimum dimension of the workgroup
+        const minDimension = Math.min(wx, wy);
         
-        // Generate all possible rectangular combinations
-        for (let px = 0; px <= maxPowerX; px++) {
-            for (let py = 0; py <= maxPowerY; py++) {
-                const tileX = Math.pow(2, px);
-                const tileY = Math.pow(2, py);
-                tileSizes.add(`${tileX},${tileY}`);
-            }
+        // Get maximum allowed power of 2 that fits in the minimum dimension
+        const maxPower = Math.floor(Math.log2(minDimension));
+        
+        // Generate square tiles (powers of 2)
+        for (let p = 0; p <= maxPower; p++) {
+            const tileSize = Math.pow(2, p);
+            tileSizes.add(`${tileSize},${tileSize}`);
         }
     
         return Array.from(tileSizes);
