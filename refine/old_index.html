@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -28,8 +27,7 @@
         }
         .chart-container {
             height: 500px;
-	    position: relative;
-	    width: 100%;
+            margin-top: 20px;
         }
         button {
             padding: 10px 20px;
@@ -145,43 +143,6 @@
             align-items: center;
             margin: 10px 0;
         }
-        .performance-summary {
-            overflow-x: auto;
-        }
-        
-        #performanceSummaryTable {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 10px;
-        }
-        
-        #performanceSummaryTable th,
-        #performanceSummaryTable td {
-            padding: 8px;
-            text-align: left;
-            border: 1px solid #ddd;
-        }
-        
-        #performanceSummaryTable th {
-            background-color: #f8f9fa;
-            font-weight: bold;
-        }
-        
-        #performanceSummaryTable tr:nth-child(even) {
-            background-color: #f8f9fa;
-        }
-        
-        #performanceSummaryTable tr:hover {
-            background-color: #f5f5f5;
-        }
-        
-        .method-cell {
-            font-weight: 500;
-        }
-        
-        .time-cell {
-            color: #666;
-        }
     </style>
 </head>
 <body>
@@ -237,10 +198,6 @@
                         <input type="checkbox" id="sharedMemoryImplementation" checked>
                         Shared Memory Tiling
                     </label>
-                    <label>
-                        <input type="checkbox" id="vectorizedImplementation" checked>
-                        Vectorized
-                    </label>
                 </div>
             </div>
 
@@ -273,26 +230,10 @@
             <div id="barChartsContainer" class="bar-charts-container">
             </div>
         </div>
-        <div class="tile">
-            <h3>Performance Summary</h3>
-            <div class="performance-summary">
-                <table id="performanceSummaryTable">
-                    <thead>
-                        <tr>
-                            <th>Matrix Size</th>
-                            <th colspan="2">Best Performance</th>
-                            <th colspan="2">Second Best</th>
-                            <th colspan="2">Third Best</th>
-                        </tr>
-                    </thead>
-                    <tbody></tbody>
-                </table>
-            </div>
-        </div>
     </div>
 
     <script>
-// Configuration
+    // Configuration
     const matrixSizes = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
 
     // Generate workgroup sizes based on the specified logic
@@ -312,8 +253,7 @@
     let benchmarkChart;
     let results = {
         naive: [],
-        sharedMemory: [],
-        vectorized: []
+        sharedMemory: []
     };
 
     // Generate tile sizes for a given workgroup size
@@ -340,6 +280,8 @@
     function isTileSizeCompatibleWithWorkgroup(tileSize, workgroupSize) {
         const [tileWidth, tileHeight] = tileSize.split(',').map(Number);
         const [workgroupWidth, workgroupHeight] = workgroupSize.split(',').map(Number);
+        
+        // Tile dimensions must be less than or equal to workgroup dimensions
         return tileWidth <= workgroupWidth && tileHeight <= workgroupHeight;
     }
 
@@ -423,8 +365,8 @@
                 beta : f32,
             }
 
-            const TILE_SIZE = ${tileRows}u;
-            const WG_SIZE = ${workgroupRows}u;
+            const TILE_SIZE = ${tileRows}u;  // Using square tiles for simplicity
+            const WG_SIZE = ${workgroupRows}u;  // Using square workgroups
 
             var<workgroup> tileA: array<f32, ${workgroupRows * workgroupCols}>;
             var<workgroup> tileB: array<f32, ${workgroupRows * workgroupCols}>;
@@ -443,11 +385,15 @@
                 let localIdx = localRow * WG_SIZE + localCol;
                 
                 var sum = 0.0;
+                
+                // Number of tiles needed for the full matrix multiplication
                 let numTiles = (N + TILE_SIZE - 1u) / TILE_SIZE;
 
                 for (var tile = 0u; tile < numTiles; tile = tile + 1u) {
+		// Load current tile of A and B into shared memory
                     let tileOffset = tile * TILE_SIZE;
 
+                    // Each thread loads its corresponding element
                     if (row < N && (tileOffset + localCol) < N) {
                         tileA[localIdx] = matrixA[row * N + tileOffset + localCol];
                     } else {
@@ -462,11 +408,13 @@
 
                     workgroupBarrier();
 
+                    // Compute partial dot product using the loaded tiles
                     if (row < N && col < N) {
                         for (var k = 0u; k < TILE_SIZE; k = k + 1u) {
+                            let aIndex = localRow * WG_SIZE + k;
+                            let bIndex = k * WG_SIZE + localCol;
+
                             if (tileOffset + k < N) {
-                                let aIndex = localRow * WG_SIZE + k;
-                                let bIndex = k * WG_SIZE + localCol;
                                 sum = sum + tileA[aIndex] * tileB[bIndex];
                             }
                         }
@@ -475,6 +423,7 @@
                     workgroupBarrier();
                 }
 
+                // Write final result
                 if (row < N && col < N) {
                     let index = row * N + col;
                     matrixC[index] = uniforms.alpha * sum + uniforms.beta * matrixC[index];
@@ -483,112 +432,29 @@
         `;
     }
 
-    // Vectorized Shared Memory WGSL implementation
-    function getVectorizedSharedMemoryWGSL(workgroupSize, tileSize) {
-        const [workgroupRows, workgroupCols] = workgroupSize.split(',').map(Number);
-        const [tileRows, tileCols] = tileSize.split(',').map(Number);
-        
-        if (tileRows < 4 || tileCols < 4) {
-            throw new Error('Vectorized implementation requires tile size >= 4');
-        }
+    // Handle matrix size selection buttons
+    function handleMatrixSizes(action) {
+        const checkboxes = document.querySelectorAll('#sizeCheckboxes input[type="checkbox"]');
+        checkboxes.forEach(checkbox => {
+            checkbox.checked = action === 'selectAll';
+        });
+    }
 
-        return `
-            @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
-            @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
-            @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
-            @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+    // Handle workgroup selection buttons
+    function handleWorkgroups(action) {
+        const checkboxes = document.querySelectorAll('#workgroupSizes input[type="checkbox"]');
+        checkboxes.forEach(checkbox => {
+            checkbox.checked = action === 'selectAll';
+        });
+        updateTileSizes();
+    }
 
-            struct Uniforms {
-                N : u32,
-                alpha : f32,
-                beta : f32,
-            }
-
-            const TILE_SIZE = ${tileRows}u;
-            const WG_SIZE = ${workgroupRows}u;
-            const VEC_SIZE = 4u;
-
-            var<workgroup> tileA: array<f32, ${workgroupRows * workgroupCols}>;
-            var<workgroup> tileB: array<f32, ${workgroupRows * workgroupCols}>;
-
-            @compute @workgroup_size(${workgroupRows}, ${workgroupCols})
-            fn main(
-                @builtin(global_invocation_id) global_id: vec3<u32>,
-                @builtin(local_invocation_id) local_id: vec3<u32>,
-                @builtin(workgroup_id) workgroup_id: vec3<u32>
-            ) {
-                let N = uniforms.N;
-                let row = global_id.y;
-                let col = global_id.x;
-                let localRow = local_id.y;
-                let localCol = local_id.x;
-                let localIdx = localRow * WG_SIZE + localCol;
-                
-                var acc = 0.0;
-                let numTiles = (N + TILE_SIZE - 1u) / TILE_SIZE;
-
-                for (var tile = 0u; tile < numTiles; tile = tile + 1u) {
-                    let tileOffset = tile * TILE_SIZE;
-
-                    if (row < N && (tileOffset + localCol) < N) {
-                        if (localCol % VEC_SIZE == 0u && (tileOffset + localCol + VEC_SIZE) <= N) {
-                            let baseIdx = row * N + tileOffset + localCol;
-                            tileA[localIdx] = matrixA[baseIdx];
-                            tileA[localIdx + 1u] = matrixA[baseIdx + 1u];
-                            tileA[localIdx + 2u] = matrixA[baseIdx + 2u];
-                            tileA[localIdx + 3u] = matrixA[baseIdx + 3u];
-                        } else {
-                            tileA[localIdx] = matrixA[row * N + tileOffset + localCol];
-                        }
-                    } else {
-                        tileA[localIdx] = 0.0;
-                    }
-
-                    if ((tileOffset + localRow) < N && col < N) {
-                        if (localRow % VEC_SIZE == 0u && (tileOffset + localRow + VEC_SIZE) <= N) {
-                            let baseIdx = (tileOffset + localRow) * N + col;
-                            tileB[localIdx] = matrixB[baseIdx];
-                            tileB[localIdx + WG_SIZE] = matrixB[baseIdx + N];
-                            tileB[localIdx + 2u * WG_SIZE] = matrixB[baseIdx + 2u * N];
-                            tileB[localIdx + 3u * WG_SIZE] = matrixB[baseIdx + 3u * N];
-                        } else {
-                            tileB[localIdx] = matrixB[(tileOffset + localRow) * N + col];
-                        }
-                    } else {
-                        tileB[localIdx] = 0.0;
-                    }
-
-                    workgroupBarrier();
-
-                    if (row < N && col < N) {
-                        for (var k = 0u; k < TILE_SIZE; k = k + VEC_SIZE) {
-                            if (k + VEC_SIZE <= TILE_SIZE) {
-                                let aVec = vec4<f32>(
-                                    tileA[localRow * WG_SIZE + k],
-                                    tileA[localRow * WG_SIZE + k + 1u],
-                                    tileA[localRow * WG_SIZE + k + 2u],
-                                    tileA[localRow * WG_SIZE + k + 3u]
-                                );
-                                let bVec = vec4<f32>(
-                                    tileB[k * WG_SIZE + localCol],
-                                    tileB[(k + 1u) * WG_SIZE + localCol],
-                                    tileB[(k + 2u) * WG_SIZE + localCol],
-                                    tileB[(k + 3u) * WG_SIZE + localCol]
-                                );
-                                acc += dot(aVec, bVec);
-                            }
-                        }
-                    }
-
-                    workgroupBarrier();
-                }
-
-                if (row < N && col < N) {
-                    let index = row * N + col;
-                    matrixC[index] = uniforms.alpha * acc + uniforms.beta * matrixC[index];
-                }
-            }
-        `;
+    // Handle tile size selection buttons
+    function handleTileSizes(action) {
+        const checkboxes = document.querySelectorAll('#tileSizes input[type="checkbox"]');
+        checkboxes.forEach(checkbox => {
+            checkbox.checked = action === 'selectAll';
+        });
     }
 
     // Initialize WebGPU
@@ -600,7 +466,7 @@
         device = await adapter.requestDevice();
         return device;
     }
-			    
+
     // Create buffer helper function
     function createBuffer(data, usage) {
         const buffer = device.createBuffer({
@@ -611,63 +477,6 @@
         new Float32Array(buffer.getMappedRange()).set(data);
         buffer.unmap();
         return buffer;
-    }
-
-    function updatePerformanceSummary() {
-        const matrixSizes = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
-        const tbody = document.querySelector('#performanceSummaryTable tbody');
-        tbody.innerHTML = '';
-    
-        matrixSizes.forEach(size => {
-            // Combine all results for this size
-            const sizeResults = [
-                ...results.naive.filter(r => r.size === size),
-                ...results.sharedMemory.filter(r => r.size === size),
-                ...results.vectorized.filter(r => r.size === size)
-            ].sort((a, b) => a.time - b.time);
-    
-            if (sizeResults.length === 0) return;
-    
-            const row = document.createElement('tr');
-    
-            // Add matrix size cell
-            const sizeCell = document.createElement('td');
-            sizeCell.textContent = `${size}x${size}`;
-            row.appendChild(sizeCell);
-    
-            // Add top 3 performers
-            for (let i = 0; i < 3; i++) {
-                const result = sizeResults[i];
-                if (result) {
-                    // Method cell
-                    const methodCell = document.createElement('td');
-                    methodCell.className = 'method-cell';
-                    const implementation = result.implementation === 'Shared Memory' ?
-                        'sharedMemory' : result.implementation.toLowerCase();
-                    methodCell.textContent = `${implementation} (${result.workgroupSize.replace(',', 'x')})`;
-                    row.appendChild(methodCell);
-    
-                    // Time cell
-                    const timeCell = document.createElement('td');
-                    timeCell.className = 'time-cell';
-                    timeCell.textContent = `${result.time.toFixed(2)} ms`;
-                    row.appendChild(timeCell);
-                } else {
-                    // Empty cells if no result
-                    const methodCell = document.createElement('td');
-                    methodCell.className = 'method-cell';
-                    methodCell.textContent = 'N/A';
-                    row.appendChild(methodCell);
-    
-                    const timeCell = document.createElement('td');
-                    timeCell.className = 'time-cell';
-                    timeCell.textContent = 'N/A';
-                    row.appendChild(timeCell);
-                }
-            }
-    
-            tbody.appendChild(row);
-        });
     }
 
     // Generate matrices
@@ -710,23 +519,10 @@
 
     // Run benchmark
     async function runBenchmark(N, workgroupSize, implementation = 'naive', tileSize = null) {
-        let shaderCode;
-        switch(implementation) {
-            case 'naive':
-                shaderCode = getNaiveWGSL(workgroupSize);
-                break;
-            case 'shared':
-                shaderCode = getNaiveDecoupledSharedMemoryWGSL(workgroupSize, tileSize);
-                break;
-            case 'vectorized':
-                shaderCode = getVectorizedSharedMemoryWGSL(workgroupSize, tileSize);
-                break;
-            default:
-                throw new Error('Unknown implementation');
-        }
-
         const shaderModule = device.createShaderModule({
-            code: shaderCode
+            code: implementation === 'naive'
+                ? getNaiveWGSL(workgroupSize)
+                : getNaiveDecoupledSharedMemoryWGSL(workgroupSize, tileSize || workgroupSize)
         });
 
         const { bufferA, bufferB, matrixA, matrixB } = generatedMatrices[N];
@@ -821,24 +617,44 @@
 
         const runNaive = document.getElementById('naiveImplementation').checked;
         const runSharedMemory = document.getElementById('sharedMemoryImplementation').checked;
-        const runVectorized = document.getElementById('vectorizedImplementation').checked;
 
         if (selectedWorkgroups.length === 0) {
             alert('Please select at least one workgroup size');
             return;
         }
 
-        if ((runSharedMemory || runVectorized) && selectedTileSizes.length === 0) {
-            alert('Please select at least one tile size for Shared Memory or Vectorized implementation');
+        if (runSharedMemory && selectedTileSizes.length === 0) {
+            alert('Please select at least one tile size for Shared Memory implementation');
             return;
         }
 
-        if (!runNaive && !runSharedMemory && !runVectorized) {
+        if (!runNaive && !runSharedMemory) {
             alert('Please select at least one kernel');
             return;
         }
 
-        results = { naive: [], sharedMemory: [], vectorized: [] };
+        // Validate tile size compatibility with workgroups
+        const compatibleConfigs = [];
+        if (runSharedMemory) {
+            for (const workgroupSize of selectedWorkgroups) {
+                const compatibleTileSizes = selectedTileSizes.filter(tileSize =>
+                    isTileSizeCompatibleWithWorkgroup(tileSize, workgroupSize)
+                );
+                if (compatibleTileSizes.length > 0) {
+                    compatibleConfigs.push({
+                        workgroupSize,
+                        tileSizes: compatibleTileSizes
+                    });
+                }
+            }
+
+            if (compatibleConfigs.length === 0) {
+                alert('No compatible workgroup and tile size combinations found. Please adjust your selection.');
+                return;
+            }
+        }
+
+        results = { naive: [], sharedMemory: [] };
 
         const resultsTable = document.getElementById('resultsTable');
         resultsTable.innerHTML = `
@@ -849,7 +665,6 @@
                         <th>Matrix Size</th>
                         <th>Workgroup Size</th>
                         <th>Tile Size</th>
-                        <th>Vectorized</th>
                         <th>Average Time (ms)</th>
                         <th>GFLOPS</th>
                         <th>Verified</th>
@@ -860,81 +675,69 @@
         `;
         const tbody = resultsTable.querySelector('tbody');
 
-        // Helper function for running implementation
-        async function runImplementation(type, size, workgroupSize, tileSize = null) {
-            // Warm-up run
-            await runBenchmark(size, workgroupSize, type, tileSize);
+        for (const size of selectedSizes) {
+            for (const workgroupSize of selectedWorkgroups) {
+                if (runNaive) {
+                    await runBenchmark(size, workgroupSize, 'naive'); // Warm-up
+                    let totalTimeNaive = 0;
+                    let allVerifiedNaive = true;
 
-            let totalTime = 0;
-            let allVerified = true;
-
-            for (let i = 0; i < iterations; i++) {
-                const result = await runBenchmark(size, workgroupSize, type, tileSize);
-                totalTime += result.time;
-                allVerified = allVerified && result.verified;
-            }
-
-            const avgTime = totalTime / iterations;
-            const gflops = (2 * size * size * size) / (avgTime * 1e6);
-
-            return {
-                avgTime,
-                gflops,
-                verified: allVerified
-            };
-        }
-	// Run naive implementation
-        if (runNaive) {
-            for (const size of selectedSizes) {
-                for (const workgroupSize of selectedWorkgroups) {
-                    try {
-                        const result = await runImplementation('naive', size, workgroupSize);
-                        
-                        results.naive.push({
-                            implementation: 'Naive',
-                            size,
-                            workgroupSize,
-                            tileSize: 'N/A',
-                            time: parseFloat(result.avgTime.toFixed(2)),
-                            gflops: parseFloat(result.gflops.toFixed(2)),
-                            verified: result.verified
-                        });
-
-                        tbody.insertRow().innerHTML = `
-                            <td>Naive</td>
-                            <td>${size}x${size}</td>
-                            <td>${workgroupSize.replace(',', 'x')}</td>
-                            <td>N/A</td>
-                            <td>N/A</td>
-                            <td>${result.avgTime.toFixed(2)}</td>
-                            <td>${result.gflops.toFixed(2)}</td>
-                            <td>${result.verified ? '✓' : '✗'}</td>
-                        `;
-                    } catch (error) {
-                        console.error('Error in naive implementation:', error);
+                    for (let i = 0; i < iterations; i++) {
+                        const result = await runBenchmark(size, workgroupSize, 'naive');
+                        totalTimeNaive += result.time;
+                        allVerifiedNaive = allVerifiedNaive && result.verified;
                     }
+
+                    const avgTimeNaive = totalTimeNaive / iterations;
+                    const gflopsNaive = (2 * size * size * size) / (avgTimeNaive * 1e6);
+
+                    results.naive.push({
+                        implementation: 'Naive',
+                        size,
+                        workgroupSize,
+                        tileSize: 'N/A',
+                        time: parseFloat(avgTimeNaive.toFixed(2)),
+                        gflops: parseFloat(gflopsNaive.toFixed(2)),
+                        verified: allVerifiedNaive
+                    });
+
+                    tbody.insertRow().innerHTML = `
+                        <td>Naive</td>
+                        <td>${size}x${size}</td>
+                        <td>${workgroupSize.replace(',', 'x')}</td>
+                        <td>N/A</td>
+                        <td>${avgTimeNaive.toFixed(2)}</td>
+                        <td>${gflopsNaive.toFixed(2)}</td>
+                        <td>${allVerifiedNaive ? '✓' : '✗'}</td>
+                    `;
                 }
-            }
-        }
 
-        // Run shared memory implementation
-        if (runSharedMemory) {
-            for (const size of selectedSizes) {
-                for (const workgroupSize of selectedWorkgroups) {
-                    for (const tileSize of selectedTileSizes) {
-                        try {
-                            if (!isTileSizeCompatibleWithWorkgroup(tileSize, workgroupSize)) continue;
+                if (runSharedMemory) {
+                    const config = compatibleConfigs.find(c => c.workgroupSize === workgroupSize);
+                    if (config) {
+                        for (const tileSize of config.tileSizes) {
+                            // Warm-up
+                            await runBenchmark(size, workgroupSize, 'shared', tileSize);
+                            let totalTimeShared = 0;
+                            let allVerifiedShared = true;
 
-                            const result = await runImplementation('shared', size, workgroupSize, tileSize);
-                            
+                            for (let i = 0; i < iterations; i++) {
+                                const result = await runBenchmark(size, workgroupSize, 'shared', tileSize);
+                                totalTimeShared += result.time;
+                                allVerifiedShared = allVerifiedShared && result.verified;
+                            }
+
+                            const avgTimeShared = totalTimeShared / iterations;
+                            const gflopsShared = (2 * size * size * size) / (avgTimeShared * 1e6);
+
                             results.sharedMemory.push({
                                 implementation: 'Shared Memory',
                                 size,
                                 workgroupSize,
                                 tileSize,
-                                time: parseFloat(result.avgTime.toFixed(2)),
-                                gflops: parseFloat(result.gflops.toFixed(2)),
-                                verified: result.verified
+                                time: parseFloat(avgTimeShared.toFixed(2)),
+                                gflops: parseFloat(gflopsShared.toFixed(2)),
+                                verified: allVerifiedShared
                             });
 
                             tbody.insertRow().innerHTML = `
@@ -942,55 +745,10 @@
                                 <td>${size}x${size}</td>
                                 <td>${workgroupSize.replace(',', 'x')}</td>
                                 <td>${tileSize.replace(',', 'x')}</td>
-                                <td>N/A</td>
-                                <td>${result.avgTime.toFixed(2)}</td>
-                                <td>${result.gflops.toFixed(2)}</td>
-                                <td>${result.verified ? '✓' : '✗'}</td>
+                                <td>${avgTimeShared.toFixed(2)}</td>
+                                <td>${gflopsShared.toFixed(2)}</td>
+                                <td>${allVerifiedShared ? '✓' : '✗'}</td>
                             `;
-                        } catch (error) {
-                            console.error('Error in shared memory implementation:', error);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Run vectorized implementation
-        if (runVectorized) {
-            for (const size of selectedSizes) {
-                for (const workgroupSize of selectedWorkgroups) {
-                    for (const tileSize of selectedTileSizes) {
-                        try {
-                            // Skip if tile size is too small for vectorization
-                            const [tRows, tCols] = tileSize.split(',').map(Number);
-                            if (tRows < 4 || tCols < 4) continue;
-                            
-                            if (!isTileSizeCompatibleWithWorkgroup(tileSize, workgroupSize)) continue;
-
-                            const result = await runImplementation('vectorized', size, workgroupSize, tileSize);
-                            
-                            results.vectorized.push({
-                                implementation: 'Vectorized',
-                                size,
-                                workgroupSize,
-                                tileSize,
-                                time: parseFloat(result.avgTime.toFixed(2)),
-                                gflops: parseFloat(result.gflops.toFixed(2)),
-                                verified: result.verified
-                            });
-
-                            tbody.insertRow().innerHTML = `
-                                <td>Vectorized</td>
-                                <td>${size}x${size}</td>
-                                <td>${workgroupSize.replace(',', 'x')}</td>
-                                <td>${tileSize.replace(',', 'x')}</td>
-                                <td>Yes</td>
-                                <td>${result.avgTime.toFixed(2)}</td>
-                                <td>${result.gflops.toFixed(2)}</td>
-                                <td>${result.verified ? '✓' : '✗'}</td>
-                            `;
-                        } catch (error) {
-                            console.error('Error in vectorized implementation:', error);
                         }
                     }
                 }
@@ -999,17 +757,16 @@
 
         updateChart();
         createBarCharts();
-	updatePerformanceSummary();
     }
 
     // Download results
     function downloadResults() {
         const csv = [
-            'Implementation,Matrix Size,Workgroup Size,Tile Size,Vectorized,Time (ms),GFLOPS,Verified'
+            'Implementation,Matrix Size,Workgroup Size,Tile Size,Time (ms),GFLOPS,Verified'
         ];
 
-        [...results.naive, ...results.sharedMemory, ...results.vectorized].forEach(result => {
-            csv.push(`${result.implementation},${result.size},${result.workgroupSize},${result.tileSize},${result.implementation === 'Vectorized' ? 'Yes' : 'N/A'},${result.time.toFixed(2)},${result.gflops.toFixed(2)},${result.verified}`);
+        [...results.naive, ...results.sharedMemory].forEach(result => {
+            csv.push(`${result.implementation},${result.size},${result.workgroupSize},${result.tileSize},${result.time.toFixed(2)},${result.gflops.toFixed(2)},${result.verified}`);
         });
 
         const blob = new Blob([csv.join('\n')], { type: 'text/csv' });
@@ -1125,187 +882,49 @@
         }
     }
 
-    // Handle matrix size selection buttons
-    function handleMatrixSizes(action) {
-        const checkboxes = document.querySelectorAll('#sizeCheckboxes input[type="checkbox"]');
-        checkboxes.forEach(checkbox => {
-            checkbox.checked = action === 'selectAll';
-        });
-    }
-
-    // Handle workgroup selection buttons
-    function handleWorkgroups(action) {
-        const checkboxes = document.querySelectorAll('#workgroupSizes input[type="checkbox"]');
-        checkboxes.forEach(checkbox => {
-            checkbox.checked = action === 'selectAll';
-        });
-        updateTileSizes();
-    }
-
-    // Handle tile size selection buttons
-    function handleTileSizes(action) {
-        const checkboxes = document.querySelectorAll('#tileSizes input[type="checkbox"]');
-        checkboxes.forEach(checkbox => {
-            checkbox.checked = action === 'selectAll';
-        });
-    }
-
-    // Update chart
-    function updateChart() {
-        const ctx = document.getElementById('benchmarkChart').getContext('2d');
-    
-        if (benchmarkChart) {
-            benchmarkChart.destroy();
-        }
-    
-        const datasets = [];
-        const colors = [
-            'rgb(75, 192, 192)', 'rgb(255, 99, 132)', 'rgb(54, 162, 235)',
-            'rgb(255, 206, 86)', 'rgb(153, 102, 255)', 'rgb(255, 159, 64)'
-        ];
-    
-        let colorIndex = 0;
-        const matrixSizes = [...new Set([...results.naive, ...results.sharedMemory, ...results.vectorized]
-            .map(r => r.size))].sort((a, b) => a - b);
-    
-        // Add datasets for each implementation
-        ['naive', 'sharedMemory', 'vectorized'].forEach(implType => {
-            if (!results[implType] || results[implType].length === 0) return;
-    
-            const configs = [...new Set(results[implType].map(r =>
-                `${r.workgroupSize}${r.tileSize ? ',' + r.tileSize : ''}`
-            ))];
-    
-            configs.forEach(config => {
-                const [workgroupSize, tileSize] = config.split(',');
-                const implResults = results[implType].filter(r =>
-                    r.workgroupSize === workgroupSize && 
-                    (tileSize ? r.tileSize === tileSize : true)
-                );
-    
-                if (implResults.length > 0) {
-                    // Sort results by matrix size to ensure correct line plotting
-                    implResults.sort((a, b) => a.size - b.size);
-    
-                    const label = implType === 'naive' ? 
-                        `Naive WG ${workgroupSize.replace(',', 'x')}` :
-                        `${implType === 'vectorized' ? 'Vectorized' : 'Shared Memory'} WG ${workgroupSize.replace(',', 'x')}${tileSize ? ' Tile ' + tileSize.replace(',', 'x') : ''}`;
-    
-                    datasets.push({
-                        label: label,
-                        data: implResults.map(r => ({
-                            x: r.size,
-                            y: r.time
-                        })),
-                        borderColor: colors[colorIndex % colors.length],
-                        backgroundColor: colors[colorIndex % colors.length].replace('rgb', 'rgba').replace(')', ', 0.1)'),
-                        borderDash: implType === 'vectorized' ? [5, 5] : [],
-                        tension: 0.1,
-                        fill: false
-                    });
-                    colorIndex++;
-                }
-            });
-        });
-    
-        benchmarkChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                datasets: datasets
-            },
-            options: {
-                responsive: true,
-                scales: {
-                    x: {
-                        type: 'linear',
-                        position: 'bottom',
-                        title: {
-                            display: true,
-                            text: 'Matrix Size'
-                        },
-                        ticks: {
-                            callback: function(value) {
-                                return `${value}x${value}`;
-                            }
-                        }
-                    },
-                    y: {
-                        type: 'logarithmic',
-                        title: {
-                            display: true,
-                            text: 'Time (ms)'
-                        }
-                    }
-                },
-                plugins: {
-                    title: {
-                        display: true,
-                        text: 'Matrix Multiplication Performance Comparison'
-                    },
-                    tooltip: {
-                        callbacks: {
-                            label: function(context) {
-                                const label = context.dataset.label || '';
-                                const value = context.parsed.y?.toFixed(2) || '';
-                                return `${label}: ${value} ms`;
-                            }
-                        }
-                    }
-                }
-            }
-        });
-    }
-    
     // Create bar charts
     function createBarCharts() {
         const barChartsContainer = document.getElementById('barChartsContainer');
         barChartsContainer.innerHTML = '';
-    
-        const getImplementationColor = (implementation, alpha = 0.8) => {
-            const colors = {
-                'Naive': `rgba(255, 99, 132, ${alpha})`,
-                'Shared Memory': `rgba(54, 162, 235, ${alpha})`,
-                'Vectorized': `rgba(75, 192, 192, ${alpha})`
-            };
-            return colors[implementation] || `rgba(201, 203, 207, ${alpha})`;
-        };
-    
-        const matrixSizes = [...new Set([...results.naive, ...results.sharedMemory, ...results.vectorized]
-            .map(r => r.size))].sort((a, b) => a - b);
-    
+
+        const matrixSizes = [...new Set([...results.naive, ...results.sharedMemory].map(r => r.size))].sort((a, b) => a - b);
+
         matrixSizes.forEach(size => {
-            const sizeResults = [
-                ...results.naive.filter(r => r.size === size),
-                ...results.sharedMemory.filter(r => r.size === size),
-                ...results.vectorized.filter(r => r.size === size)
-            ].sort((a, b) => a.time - b.time);
-    
-            if (sizeResults.length === 0) return;
-    
+            const naiveResults = results.naive.filter(r => r.size === size);
+            const sharedMemoryResults = results.sharedMemory.filter(r => r.size === size);
+
+            const allResults = [...naiveResults, ...sharedMemoryResults];
+            allResults.sort((a, b) => a.time - b.time);
+
+            if (allResults.length === 0) return;
+
             const chartWrapper = document.createElement('div');
             chartWrapper.className = 'bar-chart-wrapper';
             const canvas = document.createElement('canvas');
             chartWrapper.appendChild(canvas);
             barChartsContainer.appendChild(chartWrapper);
-    
-            const maxTime = Math.max(...sizeResults.map(r => r.time));
+
+            const maxTime = Math.max(...allResults.map(r => r.time));
             const yAxisMax = Math.ceil(maxTime * 1.1);
-    
+
             new Chart(canvas, {
                 type: 'bar',
                 data: {
-                    labels: sizeResults.map(r => {
+                    labels: allResults.map(r => {
                         const implementation = r.implementation;
                         const workgroupSize = r.workgroupSize.replace(',', 'x');
                         const tileSize = r.tileSize === 'N/A' ? '' : ` (Tile: ${r.tileSize.replace(',', 'x')})`;
-                        const vectorized = r.implementation === 'Vectorized' ? ' (Vec)' : '';
-                        return `${implementation} ${workgroupSize}${tileSize}${vectorized}`;
+                        return `${implementation} ${workgroupSize}${tileSize}`;
                     }),
                     datasets: [{
                         label: 'Execution Time',
-                        data: sizeResults.map(r => r.time),
-                        backgroundColor: sizeResults.map(r => getImplementationColor(r.implementation, 0.8)),
-                        borderColor: sizeResults.map(r => getImplementationColor(r.implementation, 1)),
+                        data: allResults.map(r => r.time),
+                        backgroundColor: allResults.map(r =>
+                            r.implementation === 'Shared Memory' ? 'rgba(54, 162, 235, 0.8)' : 'rgba(255, 99, 132, 0.8)'
+                        ),
+                        borderColor: allResults.map(r =>
+                            r.implementation === 'Shared Memory' ? 'rgba(54, 162, 235, 1)' : 'rgba(255, 99, 132, 1)'
+                        ),
                         borderWidth: 1
                     }]
                 },
@@ -1328,13 +947,6 @@
                         },
                         legend: {
                             display: false
-                        },
-                        tooltip: {
-                            callbacks: {
-                                label: function(context) {
-                                    return `Time: ${context.raw.toFixed(2)} ms`;
-                                }
-                            }
                         }
                     },
                     scales: {
@@ -1359,6 +971,94 @@
                     }
                 }
             });
+        });
+    }
+
+    // Update line chart
+    function updateChart() {
+        const ctx = document.getElementById('benchmarkChart').getContext('2d');
+
+        if (benchmarkChart) {
+            benchmarkChart.destroy();
+        }
+
+        const datasets = [];
+        const colors = [
+            'rgb(75, 192, 192)', 'rgb(255, 99, 132)', 'rgb(54, 162, 235)',
+            'rgb(255, 206, 86)', 'rgb(153, 102, 255)', 'rgb(255, 159, 64)'
+        ];
+
+        let colorIndex = 0;
+
+        // Add naive implementation datasets
+        const naiveWorkgroupSizes = [...new Set(results.naive.map(r => r.workgroupSize))];
+        naiveWorkgroupSizes.forEach(wg => {
+            const naiveResults = results.naive.filter(r => r.workgroupSize === wg);
+            if (naiveResults.length > 0) {
+                datasets.push({
+                    label: `Naive WG ${wg.replace(',', 'x')}`,
+                    data: naiveResults.map(r => r.time),
+                    borderColor: colors[colorIndex % colors.length],
+                    tension: 0.1
+                });
+                colorIndex++;
+            }
+        });
+
+        // Add shared memory implementation datasets
+        const sharedMemoryConfigs = [...new Set(results.sharedMemory.map(r =>
+            `${r.workgroupSize},${r.tileSize}`
+        ))];
+
+        sharedMemoryConfigs.forEach(config => {
+            const [workgroupSize, tileSize] = config.split(',', 2);
+            const sharedResults = results.sharedMemory.filter(r =>
+                r.workgroupSize === workgroupSize && r.tileSize === tileSize
+            );
+            if (sharedResults.length > 0) {
+                datasets.push({
+                    label: `Shared Mem WG ${workgroupSize.replace(',', 'x')} Tile ${tileSize.replace(',', 'x')}`,
+                    data: sharedResults.map(r => r.time),
+                    borderColor: colors[colorIndex % colors.length],
+                    borderDash: [5, 5],
+                    tension: 0.1
+                });
+                colorIndex++;
+            }
+        });
+
+        const matrixSizes = [...new Set([...results.naive, ...results.sharedMemory].map(r => r.size))].sort((a, b) => a - b);
+
+        benchmarkChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: matrixSizes.map(size => `${size}x${size}`),
+                datasets: datasets
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Matrix Size'
+                        }
+                    },
+                    y: {
+                        type: 'logarithmic',
+                        title: {
+                            display: true,
+                            text: 'Time (ms)'
+                        }
+                    }
+                },
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Matrix Multiplication Performance Comparison'
+                    }
+                }
+            }
         });
     }
 
