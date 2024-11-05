@@ -1,0 +1,106 @@
+function getVectorizedSharedMemoryWGSL(workgroupSize, tileSize) {
+    const [workgroupRows, workgroupCols] = workgroupSize.split(',').map(Number);
+    const [tileRows, tileCols] = tileSize.split(',').map(Number);
+    
+    if (tileRows < 4 || tileCols < 4) {
+        throw new Error('Vectorized implementation requires tile size >= 4');
+    }
+
+    return `
+        @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+        @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+        @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+        @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+
+        struct Uniforms {
+            N : u32,
+            alpha : f32,
+            beta : f32,
+        }
+
+        const TILE_SIZE = ${tileRows}u;
+        const WG_SIZE = ${workgroupRows}u;
+        const VEC_SIZE = 4u;
+
+        var<workgroup> tileA: array<f32, ${workgroupRows * workgroupCols}>;
+        var<workgroup> tileB: array<f32, ${workgroupRows * workgroupCols}>;
+
+        @compute @workgroup_size(${workgroupRows}, ${workgroupCols})
+        fn main(
+            @builtin(global_invocation_id) global_id: vec3<u32>,
+            @builtin(local_invocation_id) local_id: vec3<u32>,
+            @builtin(workgroup_id) workgroup_id: vec3<u32>
+        ) {
+            let N = uniforms.N;
+            let row = global_id.y;
+            let col = global_id.x;
+            let localRow = local_id.y;
+            let localCol = local_id.x;
+            let localIdx = localRow * WG_SIZE + localCol;
+            
+            var acc = 0.0;
+            let numTiles = (N + TILE_SIZE - 1u) / TILE_SIZE;
+
+            for (var tile = 0u; tile < numTiles; tile = tile + 1u) {
+                let tileOffset = tile * TILE_SIZE;
+
+                if (row < N && (tileOffset + localCol) < N) {
+                    if (localCol % VEC_SIZE == 0u && (tileOffset + localCol + VEC_SIZE) <= N) {
+                        let baseIdx = row * N + tileOffset + localCol;
+                        tileA[localIdx] = matrixA[baseIdx];
+                        tileA[localIdx + 1u] = matrixA[baseIdx + 1u];
+                        tileA[localIdx + 2u] = matrixA[baseIdx + 2u];
+                        tileA[localIdx + 3u] = matrixA[baseIdx + 3u];
+                    } else {
+                        tileA[localIdx] = matrixA[row * N + tileOffset + localCol];
+                    }
+                } else {
+                    tileA[localIdx] = 0.0;
+                }
+
+                if ((tileOffset + localRow) < N && col < N) {
+                    if (localRow % VEC_SIZE == 0u && (tileOffset + localRow + VEC_SIZE) <= N) {
+                        let baseIdx = (tileOffset + localRow) * N + col;
+                        tileB[localIdx] = matrixB[baseIdx];
+                        tileB[localIdx + WG_SIZE] = matrixB[baseIdx + N];
+                        tileB[localIdx + 2u * WG_SIZE] = matrixB[baseIdx + 2u * N];
+                        tileB[localIdx + 3u * WG_SIZE] = matrixB[baseIdx + 3u * N];
+                    } else {
+                        tileB[localIdx] = matrixB[(tileOffset + localRow) * N + col];
+                    }
+                } else {
+                    tileB[localIdx] = 0.0;
+                }
+
+                workgroupBarrier();
+
+                if (row < N && col < N) {
+                    for (var k = 0u; k < TILE_SIZE; k = k + VEC_SIZE) {
+                        if (k + VEC_SIZE <= TILE_SIZE) {
+                            let aVec = vec4<f32>(
+                                tileA[localRow * WG_SIZE + k],
+                                tileA[localRow * WG_SIZE + k + 1u],
+                                tileA[localRow * WG_SIZE + k + 2u],
+                                tileA[localRow * WG_SIZE + k + 3u]
+                            );
+                            let bVec = vec4<f32>(
+                                tileB[k * WG_SIZE + localCol],
+                                tileB[(k + 1u) * WG_SIZE + localCol],
+                                tileB[(k + 2u) * WG_SIZE + localCol],
+                                tileB[(k + 3u) * WG_SIZE + localCol]
+                            );
+                            acc += dot(aVec, bVec);
+                        }
+                    }
+                }
+
+                workgroupBarrier();
+            }
+
+            if (row < N && col < N) {
+                let index = row * N + col;
+                matrixC[index] = uniforms.alpha * acc + uniforms.beta * matrixC[index];
+            }
+        }
+    `;
+}
