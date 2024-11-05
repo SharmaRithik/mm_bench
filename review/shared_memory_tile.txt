@@ -1,0 +1,80 @@
+function getNaiveDecoupledSharedMemoryWGSL(workgroupSize, tileSize) {
+    const [workgroupRows, workgroupCols] = workgroupSize.split(',').map(Number);
+    const [tileRows, tileCols] = tileSize.split(',').map(Number);
+
+    return `
+        @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+        @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+        @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+        @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+
+        struct Uniforms {
+            N : u32,
+            alpha : f32,
+            beta : f32,
+        }
+
+        const TILE_SIZE = ${tileRows}u;
+        const WG_SIZE = ${workgroupRows}u;
+
+        var<workgroup> tileA: array<f32, ${workgroupRows * workgroupCols}>;
+        var<workgroup> tileB: array<f32, ${workgroupRows * workgroupCols}>;
+
+        @compute @workgroup_size(${workgroupRows}, ${workgroupCols})
+        fn main(
+            @builtin(global_invocation_id) global_id: vec3<u32>,
+            @builtin(local_invocation_id) local_id: vec3<u32>,
+            @builtin(workgroup_id) workgroup_id: vec3<u32>
+        ) {
+            let N = uniforms.N;
+            let row = global_id.y;
+            let col = global_id.x;
+            let localRow = local_id.y;
+            let localCol = local_id.x;
+            let localIdx = localRow * WG_SIZE + localCol;
+            
+            var sum = 0.0;
+            
+            // Number of tiles needed for the full matrix multiplication
+            let numTiles = (N + TILE_SIZE - 1u) / TILE_SIZE;
+
+            for (var tile = 0u; tile < numTiles; tile = tile + 1u) {
+
+                let tileOffset = tile * TILE_SIZE;
+
+                if (row < N && (tileOffset + localCol) < N) {
+                    tileA[localIdx] = matrixA[row * N + tileOffset + localCol];
+                } else {
+                    tileA[localIdx] = 0.0;
+                }
+
+                if ((tileOffset + localRow) < N && col < N) {
+                    tileB[localIdx] = matrixB[(tileOffset + localRow) * N + col];
+                } else {
+                    tileB[localIdx] = 0.0;
+                }
+
+                workgroupBarrier();
+
+                if (row < N && col < N) {
+                    for (var k = 0u; k < TILE_SIZE; k = k + 1u) {
+                        let aIndex = localRow * WG_SIZE + k;
+                        let bIndex = k * WG_SIZE + localCol;
+
+                        if (tileOffset + k < N) {
+                            sum = sum + tileA[aIndex] * tileB[bIndex];
+                        }
+                    }
+                }
+
+                workgroupBarrier();
+            }
+
+            if (row < N && col < N) {
+                let index = row * N + col;
+                matrixC[index] = uniforms.alpha * sum + uniforms.beta * matrixC[index];
+            }
+        }
+    `;
+}
+

@@ -1,0 +1,37 @@
+function getNaiveWGSL(workgroupSize) {
+    const [wx, wy] = workgroupSize.split(',').map(Number);
+    return `
+        @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+        @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+        @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+        @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+
+        struct Uniforms {
+            N : u32,
+            alpha : f32,
+            beta : f32,
+        }
+
+        @compute @workgroup_size(${wx}, ${wy})
+        fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
+            let N = uniforms.N;
+            let row = global_id.y;
+            let col = global_id.x;
+
+            if (row >= N || col >= N) {
+                return;
+            }
+
+            let row_offset = row * N;
+            var sum: f32 = 0.0;
+
+            for (var k = 0u; k < N; k = k + 1u) {
+                let a = matrixA[row_offset + k];
+                let b = matrixB[k * N + col];
+                sum = sum + a * b;
+            }
+
+            matrixC[row_offset + col] = uniforms.alpha * sum + uniforms.beta * matrixC[row_offset + col];
+        }
+    `;
+}
