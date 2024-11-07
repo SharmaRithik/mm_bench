@@ -644,25 +644,234 @@
         return buffer;
     }
 
+    function updateChart() {
+        const ctx = document.getElementById('benchmarkChart').getContext('2d');
+    
+        if (benchmarkChart) {
+            benchmarkChart.destroy();
+        }
+    
+        const datasets = [];
+        const colors = [
+            'rgb(75, 192, 192)', 'rgb(255, 99, 132)', 'rgb(54, 162, 235)',
+            'rgb(255, 206, 86)', 'rgb(153, 102, 255)', 'rgb(255, 159, 64)'
+        ];
+    
+        let colorIndex = 0;
+        const matrixSizes = [...new Set([
+            ...results.naive.filter(r => r.verified),
+            ...results.sharedMemory.filter(r => r.verified),
+            ...results.vectorized.filter(r => r.verified)
+        ].map(r => r.size))].sort((a, b) => a - b);
+    
+        // Add datasets for each implementation
+        ['naive', 'sharedMemory', 'vectorized'].forEach(implType => {
+            if (!results[implType] || results[implType].length === 0) return;
+    
+            const configs = [...new Set(results[implType]
+                .filter(r => r.verified)
+                .map(r => `${r.workgroupSize}${r.tileSize ? ',' + r.tileSize : ''}`)
+            )];
+    
+            configs.forEach(config => {
+                const [workgroupSize, tileSize] = config.split(',');
+                const implResults = results[implType].filter(r =>
+                    r.verified &&
+                    r.workgroupSize === workgroupSize && 
+                    (tileSize ? r.tileSize === tileSize : true)
+                );
+    
+                if (implResults.length > 0) {
+                    implResults.sort((a, b) => a.size - b.size);
+    
+                    const label = implType === 'naive' ? 
+                        `Naive WG ${workgroupSize.replace(',', 'x')}` :
+                        `${implType === 'vectorized' ? 'Vectorized' : 'Shared Memory'} WG ${workgroupSize.replace(',', 'x')}${tileSize ? ' Tile ' + tileSize.replace(',', 'x') : ''}`;
+    
+                    datasets.push({
+                        label: label,
+                        data: implResults.map(r => ({
+                            x: r.size,
+                            y: r.time
+                        })),
+                        borderColor: colors[colorIndex % colors.length],
+                        backgroundColor: colors[colorIndex % colors.length].replace('rgb', 'rgba').replace(')', ', 0.1)'),
+                        borderDash: implType === 'vectorized' ? [5, 5] : [],
+                        tension: 0.1,
+                        fill: false
+                    });
+                    colorIndex++;
+                }
+            });
+        });
+    
+        benchmarkChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                datasets: datasets
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    x: {
+                        type: 'linear',
+                        position: 'bottom',
+                        title: {
+                            display: true,
+                            text: 'Matrix Size'
+                        },
+                        ticks: {
+                            callback: function(value) {
+                                return `${value}x${value}`;
+                            }
+                        }
+                    },
+                    y: {
+                        type: 'logarithmic',
+                        title: {
+                            display: true,
+                            text: 'Time (ms)'
+                        }
+                    }
+                },
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Matrix Multiplication Performance Comparison'
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const label = context.dataset.label || '';
+                                const value = context.parsed.y?.toFixed(2) || '';
+                                return `${label}: ${value} ms`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    function createBarCharts() {
+        const barChartsContainer = document.getElementById('barChartsContainer');
+        barChartsContainer.innerHTML = '';
+    
+        const verifiedResults = [
+            ...results.naive.filter(r => r.verified),
+            ...results.sharedMemory.filter(r => r.verified),
+            ...results.vectorized.filter(r => r.verified)
+        ];
+    
+        const getImplementationColor = (implementation, alpha = 0.8) => {
+            const colors = {
+                'Naive': `rgba(255, 99, 132, ${alpha})`,
+                'Shared Memory': `rgba(54, 162, 235, ${alpha})`,
+                'Vectorized': `rgba(75, 192, 192, ${alpha})`
+            };
+            return colors[implementation] || `rgba(201, 203, 207, ${alpha})`;
+        };
+    
+        const matrixSizes = [...new Set(verifiedResults.map(r => r.size))]
+            .sort((a, b) => a - b);
+    
+        matrixSizes.forEach(size => {
+            const sizeResults = verifiedResults
+                .filter(r => r.size === size)
+                .sort((a, b) => a.time - b.time);
+    
+            if (sizeResults.length === 0) return;
+    
+            const chartWrapper = document.createElement('div');
+            chartWrapper.className = 'bar-chart-wrapper';
+            const canvas = document.createElement('canvas');
+            chartWrapper.appendChild(canvas);
+            barChartsContainer.appendChild(chartWrapper);
+    
+            const maxTime = Math.max(...sizeResults.map(r => r.time));
+            const yAxisMax = Math.ceil(maxTime * 1.1);
+    
+            new Chart(canvas, {
+                type: 'bar',
+                data: {
+                    labels: sizeResults.map(r => {
+                        const implementation = r.implementation;
+                        const workgroupSize = r.workgroupSize.replace(',', 'x');
+                        const tileSize = r.tileSize === 'N/A' ? '' : ` (Tile: ${r.tileSize.replace(',', 'x')})`;
+                        const vectorized = r.implementation === 'Vectorized' ? ' (Vec)' : '';
+                        return `${implementation} ${workgroupSize}${tileSize}${vectorized}`;
+                    }),
+                    datasets: [{
+                        label: 'Execution Time',
+                        data: sizeResults.map(r => r.time),
+                        backgroundColor: sizeResults.map(r => getImplementationColor(r.implementation, 0.8)),
+                        borderColor: sizeResults.map(r => getImplementationColor(r.implementation, 1)),
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: `Performance for ${size}x${size} Matrix`,
+                            font: {
+                                size: 16,
+                                weight: 'bold'
+                            }
+                        },
+                        subtitle: {
+                            display: true,
+                            text: 'Lower time is better',
+                            padding: 10
+                        },
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return `Time: ${context.raw.toFixed(2)} ms`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: yAxisMax,
+                            title: {
+                                display: true,
+                                text: 'Time (ms)'
+                            }
+                        },
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Method & Sizes'
+                            },
+                            ticks: {
+                                maxRotation: 45,
+                                minRotation: 45
+                            }
+                        }
+                    }
+                }
+            });
+        });
+    }
+
     function updatePerformanceSummary() {
         const matrixSizes = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
         const tbody = document.querySelector('#performanceSummaryTable tbody');
         tbody.innerHTML = '';
     
-        // Update to simpler column headers
-        const thead = document.querySelector('#performanceSummaryTable thead tr');
-        thead.innerHTML = `
-            <th>Matrix Size</th>
-            <th colspan="2">Best Performance</th>
-            <th colspan="2">Second Best</th>
-            <th colspan="2">Third Best</th>
-        `;
-    
         matrixSizes.forEach(size => {
             const sizeResults = [
-                ...results.naive.filter(r => r.size === size),
-                ...results.sharedMemory.filter(r => r.size === size),
-                ...results.vectorized.filter(r => r.size === size)
+                ...results.naive.filter(r => r.verified && r.size === size),
+                ...results.sharedMemory.filter(r => r.verified && r.size === size),
+                ...results.vectorized.filter(r => r.verified && r.size === size)
             ].sort((a, b) => a.time - b.time);
     
             if (sizeResults.length === 0) return;
@@ -703,7 +912,7 @@
             tbody.appendChild(row);
         });
     }
-
+    
     // Generate matrices
     async function generateMatrices(sizes) {
         for (const N of sizes) {
@@ -1185,216 +1394,9 @@
     }
 
     // Update chart
-    function updateChart() {
-        const ctx = document.getElementById('benchmarkChart').getContext('2d');
-    
-        if (benchmarkChart) {
-            benchmarkChart.destroy();
-        }
-    
-        const datasets = [];
-        const colors = [
-            'rgb(75, 192, 192)', 'rgb(255, 99, 132)', 'rgb(54, 162, 235)',
-            'rgb(255, 206, 86)', 'rgb(153, 102, 255)', 'rgb(255, 159, 64)'
-        ];
-    
-        let colorIndex = 0;
-        const matrixSizes = [...new Set([...results.naive, ...results.sharedMemory, ...results.vectorized]
-            .map(r => r.size))].sort((a, b) => a - b);
-    
-        // Add datasets for each implementation
-        ['naive', 'sharedMemory', 'vectorized'].forEach(implType => {
-            if (!results[implType] || results[implType].length === 0) return;
-    
-            const configs = [...new Set(results[implType].map(r =>
-                `${r.workgroupSize}${r.tileSize ? ',' + r.tileSize : ''}`
-            ))];
-    
-            configs.forEach(config => {
-                const [workgroupSize, tileSize] = config.split(',');
-                const implResults = results[implType].filter(r =>
-                    r.workgroupSize === workgroupSize && 
-                    (tileSize ? r.tileSize === tileSize : true)
-                );
-    
-                if (implResults.length > 0) {
-                    // Sort results by matrix size to ensure correct line plotting
-                    implResults.sort((a, b) => a.size - b.size);
-    
-                    const label = implType === 'naive' ? 
-                        `Naive WG ${workgroupSize.replace(',', 'x')}` :
-                        `${implType === 'vectorized' ? 'Vectorized' : 'Shared Memory'} WG ${workgroupSize.replace(',', 'x')}${tileSize ? ' Tile ' + tileSize.replace(',', 'x') : ''}`;
-    
-                    datasets.push({
-                        label: label,
-                        data: implResults.map(r => ({
-                            x: r.size,
-                            y: r.time
-                        })),
-                        borderColor: colors[colorIndex % colors.length],
-                        backgroundColor: colors[colorIndex % colors.length].replace('rgb', 'rgba').replace(')', ', 0.1)'),
-                        borderDash: implType === 'vectorized' ? [5, 5] : [],
-                        tension: 0.1,
-                        fill: false
-                    });
-                    colorIndex++;
-                }
-            });
-        });
-    
-        benchmarkChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                datasets: datasets
-            },
-            options: {
-                responsive: true,
-                scales: {
-                    x: {
-                        type: 'linear',
-                        position: 'bottom',
-                        title: {
-                            display: true,
-                            text: 'Matrix Size'
-                        },
-                        ticks: {
-                            callback: function(value) {
-                                return `${value}x${value}`;
-                            }
-                        }
-                    },
-                    y: {
-                        type: 'logarithmic',
-                        title: {
-                            display: true,
-                            text: 'Time (ms)'
-                        }
-                    }
-                },
-                plugins: {
-                    title: {
-                        display: true,
-                        text: 'Matrix Multiplication Performance Comparison'
-                    },
-                    tooltip: {
-                        callbacks: {
-                            label: function(context) {
-                                const label = context.dataset.label || '';
-                                const value = context.parsed.y?.toFixed(2) || '';
-                                return `${label}: ${value} ms`;
-                            }
-                        }
-                    }
-                }
-            }
-        });
-    }
+
     
     // Create bar charts
-    function createBarCharts() {
-        const barChartsContainer = document.getElementById('barChartsContainer');
-        barChartsContainer.innerHTML = '';
-    
-        const getImplementationColor = (implementation, alpha = 0.8) => {
-            const colors = {
-                'Naive': `rgba(255, 99, 132, ${alpha})`,
-                'Shared Memory': `rgba(54, 162, 235, ${alpha})`,
-                'Vectorized': `rgba(75, 192, 192, ${alpha})`
-            };
-            return colors[implementation] || `rgba(201, 203, 207, ${alpha})`;
-        };
-    
-        const matrixSizes = [...new Set([...results.naive, ...results.sharedMemory, ...results.vectorized]
-            .map(r => r.size))].sort((a, b) => a - b);
-    
-        matrixSizes.forEach(size => {
-            const sizeResults = [
-                ...results.naive.filter(r => r.size === size),
-                ...results.sharedMemory.filter(r => r.size === size),
-                ...results.vectorized.filter(r => r.size === size)
-            ].sort((a, b) => a.time - b.time);
-    
-            if (sizeResults.length === 0) return;
-    
-            const chartWrapper = document.createElement('div');
-            chartWrapper.className = 'bar-chart-wrapper';
-            const canvas = document.createElement('canvas');
-            chartWrapper.appendChild(canvas);
-            barChartsContainer.appendChild(chartWrapper);
-    
-            const maxTime = Math.max(...sizeResults.map(r => r.time));
-            const yAxisMax = Math.ceil(maxTime * 1.1);
-    
-            new Chart(canvas, {
-                type: 'bar',
-                data: {
-                    labels: sizeResults.map(r => {
-                        const implementation = r.implementation;
-                        const workgroupSize = r.workgroupSize.replace(',', 'x');
-                        const tileSize = r.tileSize === 'N/A' ? '' : ` (Tile: ${r.tileSize.replace(',', 'x')})`;
-                        const vectorized = r.implementation === 'Vectorized' ? ' (Vec)' : '';
-                        return `${implementation} ${workgroupSize}${tileSize}${vectorized}`;
-                    }),
-                    datasets: [{
-                        label: 'Execution Time',
-                        data: sizeResults.map(r => r.time),
-                        backgroundColor: sizeResults.map(r => getImplementationColor(r.implementation, 0.8)),
-                        borderColor: sizeResults.map(r => getImplementationColor(r.implementation, 1)),
-                        borderWidth: 1
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        title: {
-                            display: true,
-                            text: `Performance for ${size}x${size} Matrix`,
-                            font: {
-                                size: 16,
-                                weight: 'bold'
-                            }
-                        },
-                        subtitle: {
-                            display: true,
-                            text: 'Lower time is better',
-                            padding: 10
-                        },
-                        legend: {
-                            display: false
-                        },
-                        tooltip: {
-                            callbacks: {
-                                label: function(context) {
-                                    return `Time: ${context.raw.toFixed(2)} ms`;
-                                }
-                            }
-                        }
-                    },
-                    scales: {
-                        y: {
-                            beginAtZero: true,
-                            max: yAxisMax,
-                            title: {
-                                display: true,
-                                text: 'Time (ms)'
-                            }
-                        },
-                        x: {
-                            title: {
-                                display: true,
-                                text: 'Method & Sizes'
-                            },
-                            ticks: {
-                                maxRotation: 45,
-                                minRotation: 45
-                            }
-                        }
-                    }
-                }
-            });
-        });
-    }
 
     window.addEventListener('load', initialize);
     </script>
