@@ -649,8 +649,16 @@
         const tbody = document.querySelector('#performanceSummaryTable tbody');
         tbody.innerHTML = '';
     
+        // Update to simpler column headers
+        const thead = document.querySelector('#performanceSummaryTable thead tr');
+        thead.innerHTML = `
+            <th>Matrix Size</th>
+            <th colspan="2">Best Performance</th>
+            <th colspan="2">Second Best</th>
+            <th colspan="2">Third Best</th>
+        `;
+    
         matrixSizes.forEach(size => {
-            // Combine all results for this size
             const sizeResults = [
                 ...results.naive.filter(r => r.size === size),
                 ...results.sharedMemory.filter(r => r.size === size),
@@ -660,8 +668,8 @@
             if (sizeResults.length === 0) return;
     
             const row = document.createElement('tr');
-    
-            // Add matrix size cell
+            
+            // Matrix size cell
             const sizeCell = document.createElement('td');
             sizeCell.textContent = `${size}x${size}`;
             row.appendChild(sizeCell);
@@ -670,12 +678,14 @@
             for (let i = 0; i < 3; i++) {
                 const result = sizeResults[i];
                 if (result) {
-                    // Method cell
+                    // Combined method and config cell
                     const methodCell = document.createElement('td');
                     methodCell.className = 'method-cell';
                     const implementation = result.implementation === 'Shared Memory' ?
                         'sharedMemory' : result.implementation.toLowerCase();
-                    methodCell.textContent = `${implementation} (${result.workgroupSize.replace(',', 'x')})`;
+                    const tileConfig = result.tileSize && result.tileSize !== 'N/A' ? 
+                        ` Tile(${result.tileSize.replace(',', 'x')})` : '';
+                    methodCell.textContent = `${implementation} (${result.workgroupSize.replace(',', 'x')})${tileConfig}`;
                     row.appendChild(methodCell);
     
                     // Time cell
@@ -685,15 +695,8 @@
                     row.appendChild(timeCell);
                 } else {
                     // Empty cells if no result
-                    const methodCell = document.createElement('td');
-                    methodCell.className = 'method-cell';
-                    methodCell.textContent = 'N/A';
-                    row.appendChild(methodCell);
-    
-                    const timeCell = document.createElement('td');
-                    timeCell.className = 'time-cell';
-                    timeCell.textContent = 'N/A';
-                    row.appendChild(timeCell);
+                    row.appendChild(document.createElement('td')).textContent = 'N/A';
+                    row.appendChild(document.createElement('td')).textContent = 'N/A';
                 }
             }
     
