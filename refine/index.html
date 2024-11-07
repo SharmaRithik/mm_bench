@@ -321,25 +321,30 @@
         const [wx, wy] = workgroupSize.split(',').map(Number);
         const tileSizes = new Set();
         
-        // Find the minimum dimension of the workgroup
-        const minDimension = Math.min(wx, wy);
+        // Get maximum allowed power of 2 for each dimension
+        const maxPowerX = Math.floor(Math.log2(wx));
+        const maxPowerY = Math.floor(Math.log2(wy));
         
-        // Get maximum allowed power of 2 that fits in the minimum dimension
-        const maxPower = Math.floor(Math.log2(minDimension));
-        
-        // Generate square tiles (powers of 2)
-        for (let p = 0; p <= maxPower; p++) {
-            const tileSize = Math.pow(2, p);
-            tileSizes.add(`${tileSize},${tileSize}`);
+        // Generate all possible rectangular combinations
+        for (let px = 0; px <= maxPowerX; px++) {
+            for (let py = 0; py <= maxPowerY; py++) {
+                const tileX = Math.pow(2, px);
+                const tileY = Math.pow(2, py);
+                
+                // Add the rectangular tile size
+                tileSizes.add(`${tileX},${tileY}`);
+            }
         }
-    
+        
         return Array.from(tileSizes);
     }
 
-    // Validation function for tile size compatibility
+    // Update validation function for tile size compatibility
     function isTileSizeCompatibleWithWorkgroup(tileSize, workgroupSize) {
         const [tileWidth, tileHeight] = tileSize.split(',').map(Number);
         const [workgroupWidth, workgroupHeight] = workgroupSize.split(',').map(Number);
+        
+        // Each tile dimension must fit within its corresponding workgroup dimension
         return tileWidth <= workgroupWidth && tileHeight <= workgroupHeight;
     }
 
@@ -408,76 +413,97 @@
 
     // Shared Memory Tiling WGSL implementation
     function getNaiveDecoupledSharedMemoryWGSL(workgroupSize, tileSize) {
-        const [workgroupRows, workgroupCols] = workgroupSize.split(',').map(Number);
-        const [tileRows, tileCols] = tileSize.split(',').map(Number);
+        const [THREADS_X, THREADS_Y] = workgroupSize.split(',').map(Number);
+        const [TUNE_SPLIT, _] = tileSize.split(',').map(Number);
         
         return `
             @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
             @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
             @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
             @group(0) @binding(3) var<uniform> uniforms : Uniforms;
-
+    
             struct Uniforms {
                 N : u32,
                 alpha : f32,
                 beta : f32,
             }
-
-            const TILE_SIZE = ${tileRows}u;
-            const WG_SIZE = ${workgroupRows}u;
-
-            var<workgroup> tileA: array<f32, ${workgroupRows * workgroupCols}>;
-            var<workgroup> tileB: array<f32, ${workgroupRows * workgroupCols}>;
-
-            @compute @workgroup_size(${workgroupRows}, ${workgroupCols})
+    
+            const THREADS_X = ${THREADS_X}u;
+            const THREADS_Y = ${THREADS_Y}u;
+            const TUNE_SPLIT = ${TUNE_SPLIT}u;
+    
+            fn index2D(row: u32, col: u32, stride: u32) -> u32 {
+                return row * stride + col;
+            }
+    
+            var<workgroup> A_shared: array<f32, ${THREADS_Y * TUNE_SPLIT}>;
+            var<workgroup> B_shared: array<f32, ${TUNE_SPLIT * THREADS_X}>;
+    
+            @compute @workgroup_size(${THREADS_X}, ${THREADS_Y})
             fn main(
                 @builtin(global_invocation_id) global_id: vec3<u32>,
                 @builtin(local_invocation_id) local_id: vec3<u32>,
                 @builtin(workgroup_id) workgroup_id: vec3<u32>
             ) {
                 let N = uniforms.N;
-                let row = global_id.y;
-                let col = global_id.x;
-                let localRow = local_id.y;
-                let localCol = local_id.x;
-                let localIdx = localRow * WG_SIZE + localCol;
+                let i = global_id.y;
+                let j = global_id.x;
+                let local_i = local_id.y;
+                let local_j = local_id.x;
                 
-                var sum = 0.0;
-                let numTiles = (N + TILE_SIZE - 1u) / TILE_SIZE;
-
-                for (var tile = 0u; tile < numTiles; tile = tile + 1u) {
-                    let tileOffset = tile * TILE_SIZE;
-
-                    if (row < N && (tileOffset + localCol) < N) {
-                        tileA[localIdx] = matrixA[row * N + tileOffset + localCol];
-                    } else {
-                        tileA[localIdx] = 0.0;
+                var value: f32 = 0.0;
+                
+                for (var outer_k: u32 = 0u; outer_k < N; outer_k += TUNE_SPLIT) {
+                    // Cache data from global memory to shared memory for A
+                    for (var local_j_stride = local_j; 
+                         local_j_stride < TUNE_SPLIT; 
+                         local_j_stride += THREADS_X) {
+                        let shared_idx = index2D(local_i, local_j_stride, TUNE_SPLIT);
+                        let global_idx = index2D(i, outer_k + local_j_stride, N);
+                        
+                        var data_a = 0.0;
+                        if (i < N && (outer_k + local_j_stride) < N) {
+                            data_a = matrixA[global_idx];
+                        }
+                        A_shared[shared_idx] = data_a;
                     }
-
-                    if ((tileOffset + localRow) < N && col < N) {
-                        tileB[localIdx] = matrixB[(tileOffset + localRow) * N + col];
-                    } else {
-                        tileB[localIdx] = 0.0;
+                    
+                    // Cache data from global memory to shared memory for B
+                    for (var local_i_stride = local_i; 
+                         local_i_stride < TUNE_SPLIT; 
+                         local_i_stride += THREADS_Y) {
+                        let shared_idx = index2D(local_i_stride, local_j, THREADS_X);
+                        let global_idx = index2D(outer_k + local_i_stride, j, N);
+                        
+                        var data_b = 0.0;
+                        if ((outer_k + local_i_stride) < N && j < N) {
+                            data_b = matrixB[global_idx];
+                        }
+                        B_shared[shared_idx] = data_b;
                     }
-
+                    
+                    // Synchronize all threads in the workgroup
                     workgroupBarrier();
-
-                    if (row < N && col < N) {
-                        for (var k = 0u; k < TILE_SIZE; k = k + 1u) {
-                            if (tileOffset + k < N) {
-                                let aIndex = localRow * WG_SIZE + k;
-                                let bIndex = k * WG_SIZE + localCol;
-                                sum = sum + tileA[aIndex] * tileB[bIndex];
+                    
+                    // Compute partial results using shared memory
+                    if (i < N && j < N) {
+                        for (var inner_k: u32 = 0u; inner_k < TUNE_SPLIT; inner_k = inner_k + 1u) {
+                            if (outer_k + inner_k < N) {
+                                let a_idx = index2D(local_i, inner_k, TUNE_SPLIT);
+                                let b_idx = index2D(inner_k, local_j, THREADS_X);
+                                value = value + A_shared[a_idx] * B_shared[b_idx];
                             }
                         }
                     }
-
+                    
+                    // Synchronize before next iteration
                     workgroupBarrier();
                 }
-
-                if (row < N && col < N) {
-                    let index = row * N + col;
-                    matrixC[index] = uniforms.alpha * sum + uniforms.beta * matrixC[index];
+                
+                // Write final result
+                if (i < N && j < N) {
+                    let result_idx = index2D(i, j, N);
+                    matrixC[result_idx] = uniforms.alpha * value + uniforms.beta * matrixC[result_idx];
                 }
             }
         `;
