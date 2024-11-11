@@ -241,6 +241,10 @@
                         <input type="checkbox" id="vectorizedImplementation" checked>
                         Vectorized
                     </label>
+                    <label>
+                        <input type="checkbox" id="coarsenedImplementation" checked>
+                        Coarsened
+                    </label>
                 </div>
             </div>
 
@@ -337,6 +341,15 @@
         }
         
         return Array.from(tileSizes);
+    }
+
+    const coarseningSizes = [];
+    for (let x = 0; x <= 4; x++) {
+        for (let y = 0; y <= 4; y++) {
+            const xDim = Math.pow(2, x);
+            const yDim = Math.pow(2, y);
+            coarseningSizes.push(`${xDim},${yDim}`);
+        }
     }
 
     // Update validation function for tile size compatibility
@@ -622,6 +635,112 @@
             }
     `;}
 
+    function getCoarsenedSharedMemoryWGSL(workgroupSize, tileSize, coarsenX, coarsenY) {
+        const [THREADS_X, THREADS_Y] = workgroupSize.split(',').map(Number);
+        const [TILE_SIZE_X, TILE_SIZE_Y] = tileSize.split(',').map(Number);
+        const COARSEN_X = Math.min(Number(coarsenX), TILE_SIZE_X / THREADS_X);
+        const COARSEN_Y = Math.min(Number(coarsenY), TILE_SIZE_Y / THREADS_Y);
+    
+        return `
+            @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+            @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+            @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+            @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+    
+            struct Uniforms {
+                N : u32,
+                alpha : f32,
+                beta : f32,
+            }
+    
+            const THREADS_X = ${THREADS_X}u;
+            const THREADS_Y = ${THREADS_Y}u;
+            const TILE_SIZE_X = ${TILE_SIZE_X}u;
+            const TILE_SIZE_Y = ${TILE_SIZE_Y}u;
+            const COARSEN_X = ${COARSEN_X}u;
+            const COARSEN_Y = ${COARSEN_Y}u;
+    
+            fn index2D(row: u32, col: u32, stride: u32) -> u32 {
+                return row * stride + col;
+            }
+    
+            var<workgroup> A_shared: array<f32, ${THREADS_Y * TILE_SIZE_X}>;
+            var<workgroup> B_shared: array<f32, ${TILE_SIZE_Y * THREADS_X}>;
+    
+            @compute @workgroup_size(${THREADS_X}, ${THREADS_Y})
+            fn main(
+                @builtin(global_invocation_id) global_id: vec3<u32>,
+                @builtin(local_invocation_id) local_id: vec3<u32>,
+                @builtin(workgroup_id) workgroup_id: vec3<u32>
+            ) {
+                let N = uniforms.N;
+                let wg_row = workgroup_id.y * (THREADS_Y * COARSEN_Y);
+                let wg_col = workgroup_id.x * (THREADS_X * COARSEN_X);
+    
+                var acc: array<f32, ${COARSEN_X * COARSEN_Y}>;
+                for (var i = 0u; i < ${COARSEN_X * COARSEN_Y}u; i++) {
+                    acc[i] = 0.0;
+                }
+    
+                for (var outer_k: u32 = 0u; outer_k < N; outer_k += TILE_SIZE_X) {
+                    for (var cy = 0u; cy < COARSEN_Y; cy++) {
+                        let global_row = wg_row + local_id.y + cy * THREADS_Y;
+                        if (global_row < N) {
+                            for (var k = local_id.x; k < TILE_SIZE_X; k += THREADS_X) {
+                                let global_k = outer_k + k;
+                                if (global_k < N) {
+                                    let shared_idx = index2D(local_id.y, k, TILE_SIZE_X);
+                                    A_shared[shared_idx] = matrixA[index2D(global_row, global_k, N)];
+                                }
+                            }
+                        }
+                    }
+    
+                    for (var cx = 0u; cx < COARSEN_X; cx++) {
+                        let global_col = wg_col + local_id.x + cx * THREADS_X;
+                        if (global_col < N) {
+                            for (var k = local_id.y; k < TILE_SIZE_Y; k += THREADS_Y) {
+                                let global_k = outer_k + k;
+                                if (global_k < N) {
+                                    let shared_idx = index2D(k, local_id.x, THREADS_X);
+                                    B_shared[shared_idx] = matrixB[index2D(global_k, global_col, N)];
+                                }
+                            }
+                        }
+                    }
+    
+                    workgroupBarrier();
+    
+                    for (var k = 0u; k < TILE_SIZE_X; k++) {
+                        for (var cy = 0u; cy < COARSEN_Y; cy++) {
+                            let a_val = A_shared[index2D(local_id.y + cy * THREADS_Y, k, TILE_SIZE_X)];
+                            for (var cx = 0u; cx < COARSEN_X; cx++) {
+                                let b_val = B_shared[index2D(k, local_id.x + cx * THREADS_X, THREADS_X)];
+                                acc[cy * COARSEN_X + cx] += a_val * b_val;
+                            }
+                        }
+                    }
+    
+                    workgroupBarrier();
+                }
+    
+                for (var cy = 0u; cy < COARSEN_Y; cy++) {
+                    let global_row = wg_row + local_id.y + cy * THREADS_Y;
+                    if (global_row < N) {
+                        for (var cx = 0u; cx < COARSEN_X; cx++) {
+                            let global_col = wg_col + local_id.x + cx * THREADS_X;
+                            if (global_col < N) {
+                                let idx = index2D(global_row, global_col, N);
+                                matrixC[idx] = uniforms.alpha * acc[cy * COARSEN_X + cx] + 
+                                               uniforms.beta * matrixC[idx];
+                            }
+                        }
+                    }
+                }
+            }
+        `;
+    }
+
     // Initialize WebGPU
     async function initWebGPU() {
         if (!navigator.gpu) {
@@ -661,7 +780,8 @@
         const matrixSizes = [...new Set([
             ...results.naive.filter(r => r.verified),
             ...results.sharedMemory.filter(r => r.verified),
-            ...results.vectorized.filter(r => r.verified)
+            ...results.vectorized.filter(r => r.verified),
+            ...results.coarsened.filter(r => r.verified)
         ].map(r => r.size))].sort((a, b) => a - b);
     
         // Add datasets for each implementation
@@ -760,14 +880,16 @@
         const verifiedResults = [
             ...results.naive.filter(r => r.verified),
             ...results.sharedMemory.filter(r => r.verified),
-            ...results.vectorized.filter(r => r.verified)
+            ...results.vectorized.filter(r => r.verified),
+            ...results.coarsened.filter(r => r.verified) 
         ];
     
         const getImplementationColor = (implementation, alpha = 0.8) => {
             const colors = {
                 'Naive': `rgba(255, 99, 132, ${alpha})`,
                 'Shared Memory': `rgba(54, 162, 235, ${alpha})`,
-                'Vectorized': `rgba(75, 192, 192, ${alpha})`
+                'Vectorized': `rgba(75, 192, 192, ${alpha})`,
+		'Coarsened': `rgba(153, 102, 255, ${alpha})`
             };
             return colors[implementation] || `rgba(201, 203, 207, ${alpha})`;
         };
@@ -871,7 +993,8 @@
             const sizeResults = [
                 ...results.naive.filter(r => r.verified && r.size === size),
                 ...results.sharedMemory.filter(r => r.verified && r.size === size),
-                ...results.vectorized.filter(r => r.verified && r.size === size)
+                ...results.vectorized.filter(r => r.verified && r.size === size),
+		...results.coarsened.filter(r => r.verified && r.size === size)
             ].sort((a, b) => a.time - b.time);
     
             if (sizeResults.length === 0) return;
@@ -894,9 +1017,10 @@
                         'sharedMemory' : result.implementation.toLowerCase();
                     const tileConfig = result.tileSize && result.tileSize !== 'N/A' ? 
                         ` Tile(${result.tileSize.replace(',', 'x')})` : '';
-                    methodCell.textContent = `${implementation} (${result.workgroupSize.replace(',', 'x')})${tileConfig}`;
+                    const coarseningConfig = result.implementation === 'Coarsened' ?
+                        ` Coarse(${result.coarsenX}x${result.coarsenY})` : '';
+                    methodCell.textContent = `${implementation} (${result.workgroupSize.replace(',', 'x')})${tileConfig}${coarseningConfig}`;
                     row.appendChild(methodCell);
-    
                     // Time cell
                     const timeCell = document.createElement('td');
                     timeCell.className = 'time-cell';
@@ -952,7 +1076,7 @@
     }
 
     // Run benchmark
-    async function runBenchmark(N, workgroupSize, implementation = 'naive', tileSize = null) {
+    async function runBenchmark(N, workgroupSize, implementation = 'naive', tileSize = null, coarsenX = null, coarsenY = null ) {
         let shaderCode;
         switch(implementation) {
             case 'naive':
@@ -963,6 +1087,9 @@
                 break;
             case 'vectorized':
                 shaderCode = getVectorizedSharedMemoryWGSL(workgroupSize, tileSize);
+                break;
+            case 'coarsened':
+                shaderCode = getCoarsenedSharedMemoryWGSL(workgroupSize, tileSize, coarsenX, coarsenY);
                 break;
             default:
                 throw new Error('Unknown implementation');
@@ -1062,26 +1189,35 @@
         const selectedTileSizes = Array.from(document.querySelectorAll('#tileSizes input:checked'))
             .map(cb => cb.value);
 
+        const selectedCoarseningSizes = Array.from(document.querySelectorAll('#coarseningSizes input:checked'))
+            .map(cb => cb.value);
+
         const runNaive = document.getElementById('naiveImplementation').checked;
         const runSharedMemory = document.getElementById('sharedMemoryImplementation').checked;
         const runVectorized = document.getElementById('vectorizedImplementation').checked;
+        const runCoarsened = document.getElementById('coarsenedImplementation').checked;
 
         if (selectedWorkgroups.length === 0) {
             alert('Please select at least one workgroup size');
             return;
         }
-
-        if ((runSharedMemory || runVectorized) && selectedTileSizes.length === 0) {
-            alert('Please select at least one tile size for Shared Memory or Vectorized implementation');
+    
+        if ((runSharedMemory || runVectorized || runCoarsened) && selectedTileSizes.length === 0) {
+            alert('Please select at least one tile size for Shared Memory, Vectorized, or Coarsened implementation');
             return;
         }
-
-        if (!runNaive && !runSharedMemory && !runVectorized) {
+    
+        if (runCoarsened && selectedCoarseningSizes.length === 0) {
+            alert('Please select at least one coarsening size for Coarsened implementation');
+            return;
+        }
+    
+        if (!runNaive && !runSharedMemory && !runVectorized && !runCoarsened) {
             alert('Please select at least one kernel');
             return;
         }
 
-        results = { naive: [], sharedMemory: [], vectorized: [] };
+        results = { naive: [], sharedMemory: [], vectorized: [], coarsened: []};
 
         const resultsTable = document.getElementById('resultsTable');
         resultsTable.innerHTML = `
@@ -1104,28 +1240,36 @@
         const tbody = resultsTable.querySelector('tbody');
 
         // Helper function for running implementation
-        async function runImplementation(type, size, workgroupSize, tileSize = null) {
+        async function runImplementation(type, size, workgroupSize, tileSize = null, coarsenX = null, coarsenY = null) {
             // Warm-up run
-            await runBenchmark(size, workgroupSize, type, tileSize);
-
+            await runBenchmark(size, workgroupSize, type, tileSize, coarsenX, coarsenY);
+        
             let totalTime = 0;
             let allVerified = true;
-
+        
             for (let i = 0; i < iterations; i++) {
-                const result = await runBenchmark(size, workgroupSize, type, tileSize);
+                const result = await runBenchmark(
+                    size, 
+                    workgroupSize, 
+                    type === 'coarsened' ? 'coarsened' : type, 
+                    tileSize,
+                    coarsenX,
+                    coarsenY
+                );
                 totalTime += result.time;
                 allVerified = allVerified && result.verified;
             }
-
+        
             const avgTime = totalTime / iterations;
             const gflops = (2 * size * size * size) / (avgTime * 1e6);
-
+        
             return {
                 avgTime,
                 gflops,
                 verified: allVerified
             };
         }
+
 	// Run naive implementation
         if (runNaive) {
             for (const size of selectedSizes) {
@@ -1240,6 +1384,49 @@
             }
         }
 
+        if (runCoarsened) {
+            for (const size of selectedSizes) {
+                for (const workgroupSize of selectedWorkgroups) {
+                    for (const tileSize of selectedTileSizes) {
+                        for (const coarseningSize of selectedCoarseningSizes) {
+                            try {
+                                if (!isTileSizeCompatibleWithWorkgroup(tileSize, workgroupSize)) continue;
+        
+                                const [coarsenX, coarsenY] = coarseningSize.split(',').map(Number);
+				console.log('Debug - Coarsening values:', coarsenX, coarsenY);
+                                const result = await runImplementation('coarsened', size, workgroupSize, tileSize, coarsenX, coarsenY);
+                                
+                                results.coarsened.push({
+                                    implementation: 'Coarsened',
+                                    size,
+                                    workgroupSize,
+                                    tileSize,
+                                    coarsenX,
+                                    coarsenY,
+                                    time: parseFloat(result.avgTime.toFixed(2)),
+                                    gflops: parseFloat(result.gflops.toFixed(2)),
+                                    verified: result.verified
+                                });
+        
+                                tbody.insertRow().innerHTML = `
+                                    <td>Coarsened (${coarsenX}x${coarsenY})</td>
+                                    <td>${size}x${size}</td>
+                                    <td>${workgroupSize.replace(',', 'x')}</td>
+                                    <td>${tileSize.replace(',', 'x')}</td>
+                                    <td>N/A</td>
+                                    <td>${result.avgTime.toFixed(2)}</td>
+                                    <td>${result.gflops.toFixed(2)}</td>
+                                    <td>${result.verified ? '✓' : '✗'}</td>
+                                `;
+                            } catch (error) {
+                                console.error('Error in coarsened implementation:', error);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         updateChart();
         createBarCharts();
 	updatePerformanceSummary();
@@ -1251,8 +1438,10 @@
             'Implementation,Matrix Size,Workgroup Size,Tile Size,Vectorized,Time (ms),GFLOPS,Verified'
         ];
 
-        [...results.naive, ...results.sharedMemory, ...results.vectorized].forEach(result => {
-            csv.push(`${result.implementation},${result.size},${result.workgroupSize},${result.tileSize},${result.implementation === 'Vectorized' ? 'Yes' : 'N/A'},${result.time.toFixed(2)},${result.gflops.toFixed(2)},${result.verified}`);
+        [...results.naive, ...results.sharedMemory, ...results.vectorized, ...results.coarsened].forEach(result => {
+            const coarsening = result.implementation === 'Coarsened' ? 
+                `${result.coarsenX}x${result.coarsenY}` : 'N/A';
+            csv.push(`${result.implementation},${result.size},${result.workgroupSize},${result.tileSize},${coarsening},${result.time.toFixed(2)},${result.gflops.toFixed(2)},${result.verified}`);
         });
 
         const blob = new Blob([csv.join('\n')], { type: 'text/csv' });
@@ -1297,7 +1486,7 @@
         try {
             await initWebGPU();
             await updateDeviceInfo();
-
+    
             // Initialize matrix size checkboxes
             const sizesContainer = document.getElementById('sizeCheckboxes');
             sizesContainer.innerHTML = matrixSizes.map(size => `
@@ -1306,7 +1495,7 @@
                     ${size}x${size}
                 </label>
             `).join(' ');
-
+    
             // Initialize workgroup size checkboxes
             const workgroupsContainer = document.getElementById('workgroupSizes');
             workgroupsContainer.innerHTML = workgroupSizes.map(size => `
@@ -1315,15 +1504,37 @@
                     ${size.replace(',', 'x')}
                 </label>
             `).join('');
-
+    
             // Add event listener for workgroup size changes
             document.querySelectorAll('#workgroupSizes input[type="checkbox"]').forEach(checkbox => {
                 checkbox.addEventListener('change', updateTileSizes);
             });
-
+    
             // Initial update of tile sizes
             updateTileSizes();
-
+    
+            // Add coarsening configuration
+            const coarseningConfig = document.createElement('div');
+            coarseningConfig.className = 'config-section';
+            coarseningConfig.innerHTML = `
+                <div class="section-header">
+                    <h4>Coarsening Sizes</h4>
+                    <div class="button-group">
+                        <button class="small-button" onclick="handleCoarseningSizes('reset')">Reset</button>
+                        <button class="small-button" onclick="handleCoarseningSizes('selectAll')">Select All</button>
+                    </div>
+                </div>
+                <div id="coarseningSizes" class="options-grid">
+                    ${coarseningSizes.map(size => `
+                        <label>
+                            <input type="checkbox" value="${size}" ${size === '2,2' ? 'checked' : ''}>
+                            ${size.replace(',', 'x')}
+                        </label>
+                    `).join('')}
+                </div>
+            `;
+            document.querySelector('.implementation-selector').parentNode.before(coarseningConfig);
+    
             // Event listeners for buttons
             document.getElementById('generateMatrices').addEventListener('click', async () => {
                 const selectedSizes = Array.from(document.querySelectorAll('#sizeCheckboxes input:checked'))
@@ -1345,7 +1556,7 @@
                     document.getElementById('generateMatrices').textContent = 'Generate Matrices';
                 }
             });
-
+    
             document.getElementById('runBenchmark').addEventListener('click', async () => {
                 try {
                     document.getElementById('runBenchmark').disabled = true;
@@ -1359,9 +1570,9 @@
                     document.getElementById('runBenchmark').textContent = 'Run Benchmark';
                 }
             });
-
+    
             document.getElementById('downloadResults').addEventListener('click', downloadResults);
-
+    
         } catch (error) {
             console.error('Initialization failed:', error);
             alert('Failed to initialize WebGPU: ' + error.message);
@@ -1393,10 +1604,16 @@
         });
     }
 
-    // Update chart
-
-    
-    // Create bar charts
+    //Handle coarsening sizes
+    function handleCoarseningSizes(action) {
+        const checkboxes = document.querySelectorAll('#coarseningSizes input[type="checkbox"]');
+        checkboxes.forEach(checkbox => {
+            checkbox.checked = action === 'selectAll';
+            if (action === 'reset' && checkbox.value === '2,2') {
+                checkbox.checked = true;
+            }
+        });
+    }
 
     window.addEventListener('load', initialize);
     </script>
