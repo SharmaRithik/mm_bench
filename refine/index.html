@@ -637,9 +637,9 @@
 
     function getCoarsenedSharedMemoryWGSL(workgroupSize, tileSize, coarsenX, coarsenY) {
         const [THREADS_X, THREADS_Y] = workgroupSize.split(',').map(Number);
-        const [TILE_SIZE_X, TILE_SIZE_Y] = tileSize.split(',').map(Number);
-        const COARSEN_X = Math.min(Number(coarsenX), TILE_SIZE_X / THREADS_X);
-        const COARSEN_Y = Math.min(Number(coarsenY), TILE_SIZE_Y / THREADS_Y);
+        const [TUNE_SPLIT, _] = tileSize.split(',').map(Number);
+        const COARSEN_X = Math.min(Number(coarsenX), TUNE_SPLIT / THREADS_X);
+        const COARSEN_Y = Math.min(Number(coarsenY), TUNE_SPLIT / THREADS_Y);
     
         return `
             @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
@@ -655,8 +655,7 @@
     
             const THREADS_X = ${THREADS_X}u;
             const THREADS_Y = ${THREADS_Y}u;
-            const TILE_SIZE_X = ${TILE_SIZE_X}u;
-            const TILE_SIZE_Y = ${TILE_SIZE_Y}u;
+            const TUNE_SPLIT = ${TUNE_SPLIT}u;
             const COARSEN_X = ${COARSEN_X}u;
             const COARSEN_Y = ${COARSEN_Y}u;
     
@@ -664,8 +663,8 @@
                 return row * stride + col;
             }
     
-            var<workgroup> A_shared: array<f32, ${THREADS_Y * TILE_SIZE_X}>;
-            var<workgroup> B_shared: array<f32, ${TILE_SIZE_Y * THREADS_X}>;
+            var<workgroup> A_shared: array<f32, ${THREADS_Y * TUNE_SPLIT}>;
+            var<workgroup> B_shared: array<f32, ${TUNE_SPLIT * THREADS_X}>;
     
             @compute @workgroup_size(${THREADS_X}, ${THREADS_Y})
             fn main(
@@ -682,28 +681,34 @@
                     acc[i] = 0.0;
                 }
     
-                for (var outer_k: u32 = 0u; outer_k < N; outer_k += TILE_SIZE_X) {
+                for (var outer_k: u32 = 0u; outer_k < N; outer_k += TUNE_SPLIT) {
+                    // Load A into shared memory
                     for (var cy = 0u; cy < COARSEN_Y; cy++) {
                         let global_row = wg_row + local_id.y + cy * THREADS_Y;
                         if (global_row < N) {
-                            for (var k = local_id.x; k < TILE_SIZE_X; k += THREADS_X) {
+                            for (var k = local_id.x; k < TUNE_SPLIT; k += THREADS_X) {
                                 let global_k = outer_k + k;
+                                let shared_idx = index2D(local_id.y + cy * THREADS_Y, k, TUNE_SPLIT);
                                 if (global_k < N) {
-                                    let shared_idx = index2D(local_id.y, k, TILE_SIZE_X);
                                     A_shared[shared_idx] = matrixA[index2D(global_row, global_k, N)];
+                                } else {
+                                    A_shared[shared_idx] = 0.0;
                                 }
                             }
                         }
                     }
     
+                    // Load B into shared memory
                     for (var cx = 0u; cx < COARSEN_X; cx++) {
                         let global_col = wg_col + local_id.x + cx * THREADS_X;
                         if (global_col < N) {
-                            for (var k = local_id.y; k < TILE_SIZE_Y; k += THREADS_Y) {
+                            for (var k = local_id.y; k < TUNE_SPLIT; k += THREADS_Y) {
                                 let global_k = outer_k + k;
+                                let shared_idx = index2D(k, local_id.x + cx * THREADS_X, THREADS_X);
                                 if (global_k < N) {
-                                    let shared_idx = index2D(k, local_id.x, THREADS_X);
                                     B_shared[shared_idx] = matrixB[index2D(global_k, global_col, N)];
+                                } else {
+                                    B_shared[shared_idx] = 0.0;
                                 }
                             }
                         }
@@ -711,9 +716,10 @@
     
                     workgroupBarrier();
     
-                    for (var k = 0u; k < TILE_SIZE_X; k++) {
+                    // Compute partial results
+                    for (var k = 0u; k < TUNE_SPLIT; k++) {
                         for (var cy = 0u; cy < COARSEN_Y; cy++) {
-                            let a_val = A_shared[index2D(local_id.y + cy * THREADS_Y, k, TILE_SIZE_X)];
+                            let a_val = A_shared[index2D(local_id.y + cy * THREADS_Y, k, TUNE_SPLIT)];
                             for (var cx = 0u; cx < COARSEN_X; cx++) {
                                 let b_val = B_shared[index2D(k, local_id.x + cx * THREADS_X, THREADS_X)];
                                 acc[cy * COARSEN_X + cx] += a_val * b_val;
@@ -724,6 +730,7 @@
                     workgroupBarrier();
                 }
     
+                // Write back results
                 for (var cy = 0u; cy < COARSEN_Y; cy++) {
                     let global_row = wg_row + local_id.y + cy * THREADS_Y;
                     if (global_row < N) {
@@ -731,8 +738,7 @@
                             let global_col = wg_col + local_id.x + cx * THREADS_X;
                             if (global_col < N) {
                                 let idx = index2D(global_row, global_col, N);
-                                matrixC[idx] = uniforms.alpha * acc[cy * COARSEN_X + cx] + 
-                                               uniforms.beta * matrixC[idx];
+                                matrixC[idx] = uniforms.alpha * acc[cy * COARSEN_X + cx] + uniforms.beta * matrixC[idx];
                             }
                         }
                     }
