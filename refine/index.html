@@ -783,8 +783,8 @@
     function get1DSharedMemoryTilingWGSL(workgroupSize, tilingMultiplier) {
         const [THREADS_X, THREADS_Y] = workgroupSize.split(',').map(Number);
         const TM = Number(tilingMultiplier);
-        const TILE_X = THREADS_X; 
-        const TILE_Y = THREADS_Y * TM; 
+        const TILE_X = THREADS_X;
+        const TILE_Y = THREADS_Y * TM;
     
         return `
             @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
@@ -804,12 +804,15 @@
             const TILE_X = THREADS_X;
             const TILE_Y = THREADS_Y * TM;
     
-            fn index1D(row: u32, col: u32, stride: u32) -> u32 {
-                return row * stride + col;
-            }
+            // Double buffering for shared memory with padding to avoid bank conflicts
+            var<workgroup> A_buffer1: array<f32, ${THREADS_X * THREADS_Y * TM + THREADS_X}>;
+            var<workgroup> A_buffer2: array<f32, ${THREADS_X * THREADS_Y * TM + THREADS_X}>;
+            var<workgroup> B_buffer1: array<f32, ${TILE_X * TILE_X + THREADS_X}>;
+            var<workgroup> B_buffer2: array<f32, ${TILE_X * TILE_X + THREADS_X}>;
     
-            var<workgroup> A_shared: array<f32, ${THREADS_X * THREADS_Y * TM}>;
-            var<workgroup> B_shared: array<f32, ${TILE_X * TILE_X}>;
+            fn index1D(row: u32, col: u32, stride: u32) -> u32 {
+                return row * (stride + 1u) + col; // Added padding for bank conflict avoidance
+            }
     
             @compute @workgroup_size(${THREADS_X}, ${THREADS_Y})
             fn main(
@@ -823,47 +826,76 @@
                 let local_row = local_id.y;
                 let local_col = local_id.x;
     
+                // Thread accumulation registers
                 var thread_results: array<f32, ${TM}>;
                 for (var t = 0u; t < TM; t = t + 1u) {
                     thread_results[t] = 0.0;
                 }
-    
+                
+                // Main computation loop with double buffering
+                var buffer_idx = 0u;
                 for (var tile = 0u; tile < N; tile = tile + TILE_X) {
-                    let shared_base_idx = (local_row * TM) * TILE_X + local_col;
+                    let a_shared_base_idx = (local_row * TM) * TILE_X + local_col;
+                    let b_shared_idx = index1D(local_row, local_col, TILE_X);
+    
+                    // Load current tile
                     for (var extra = 0u; extra < TM; extra = extra + 1u) {
                         let global_row = wg_row * TILE_Y + (local_row * TM) + extra;
                         let global_col = tile + local_col;
+                        let current_idx = index1D(local_row * TM + extra, local_col, TILE_X);
     
                         if (global_row < N && global_col < N) {
-                            A_shared[shared_base_idx + extra * TILE_X] = matrixA[global_row * N + global_col];
+                            if (buffer_idx == 0u) {
+                                A_buffer1[current_idx] = matrixA[global_row * N + global_col];
+                            } else {
+                                A_buffer2[current_idx] = matrixA[global_row * N + global_col];
+                            }
                         } else {
-                            A_shared[shared_base_idx + extra * TILE_X] = 0.0;
+                            if (buffer_idx == 0u) {
+                                A_buffer1[current_idx] = 0.0;
+                            } else {
+                                A_buffer2[current_idx] = 0.0;
+                            }
                         }
                     }
     
-                    let b_shared_idx = index1D(local_row, local_col, TILE_X);
+                    // Load B matrix tile
                     let b_global_row = tile + local_row;
                     let b_global_col = wg_col * TILE_X + local_col;
-    
+                    
                     if (b_global_row < N && b_global_col < N) {
-                        B_shared[b_shared_idx] = matrixB[b_global_row * N + b_global_col];
+                        if (buffer_idx == 0u) {
+                            B_buffer1[b_shared_idx] = matrixB[b_global_row * N + b_global_col];
+                        } else {
+                            B_buffer2[b_shared_idx] = matrixB[b_global_row * N + b_global_col];
+                        }
                     } else {
-                        B_shared[b_shared_idx] = 0.0;
+                        if (buffer_idx == 0u) {
+                            B_buffer1[b_shared_idx] = 0.0;
+                        } else {
+                            B_buffer2[b_shared_idx] = 0.0;
+                        }
                     }
     
                     workgroupBarrier();
     
+                    // Compute using current tile
                     for (var k = 0u; k < TILE_X; k = k + 1u) {
-                        let b_val = B_shared[index1D(k, local_col, TILE_X)];
+                        let k_idx = index1D(k, local_col, TILE_X);
+                        let b_val = select(B_buffer2[k_idx], B_buffer1[k_idx], buffer_idx == 0u);
+                        
                         for (var t = 0u; t < TM; t = t + 1u) {
-                            let a_val = A_shared[index1D(local_row * TM + t, k, TILE_X)];
+                            let a_idx = index1D(local_row * TM + t, k, TILE_X);
+                            let a_val = select(A_buffer2[a_idx], A_buffer1[a_idx], buffer_idx == 0u);
                             thread_results[t] += a_val * b_val;
                         }
                     }
     
                     workgroupBarrier();
+                    buffer_idx = 1u - buffer_idx;  // Toggle between 0 and 1
                 }
     
+                // Write results to global memory
                 for (var t = 0u; t < TM; t = t + 1u) {
                     let global_row = wg_row * TILE_Y + local_row * TM + t;
                     let global_col = wg_col * TILE_X + local_col;
@@ -906,104 +938,214 @@
             benchmarkChart.destroy();
         }
     
-        const datasets = [];
         const colors = [
-            'rgb(75, 192, 192)', 'rgb(255, 99, 132)', 'rgb(54, 162, 235)',
-            'rgb(255, 206, 86)', 'rgb(153, 102, 255)', 'rgb(255, 159, 64)'
+            'rgb(54, 162, 235)',  // blue
+            'rgb(75, 192, 192)',  // teal
+            'rgb(153, 102, 255)', // purple
+            'rgb(255, 159, 64)',  // orange
+            'rgb(255, 99, 132)'   // red
         ];
     
-        let colorIndex = 0;
+        function formatConfigForLegend(result) {
+            let config = `${result.implementation} (${result.workgroupSize.replace(',', 'x')})`;
+            if (result.implementation === '1D Tiling') {
+                if (result.tilingMultiplier) {
+                    config += ` TM${result.tilingMultiplier}x`;
+                }
+            } else {
+                if (result.tileSize && result.tileSize !== 'N/A') {
+                    config += ` T${result.tileSize.replace(',', 'x')}`;
+                }
+                if (result.coarsenX && result.coarsenY) {
+                    config += ` C${result.coarsenX}x${result.coarsenY}`;
+                }
+            }
+            return config;
+        }
+    
+        // Get all matrix sizes
         const matrixSizes = [...new Set([
-            ...results.naive.filter(r => r.verified),
-            ...results.sharedMemory.filter(r => r.verified),
-            ...results.vectorized.filter(r => r.verified),
-            ...results.coarsened.filter(r => r.verified),
-	    ...results.oneDTiling.filter(r => r.verified)
-        ].map(r => r.size))].sort((a, b) => a - b);
+            ...results.naive.map(r => r.size),
+            ...results.sharedMemory.map(r => r.size),
+            ...results.vectorized.map(r => r.size),
+            ...results.coarsened.map(r => r.size),
+            ...results.oneDTiling.map(r => r.size)
+        ])].sort((a, b) => a - b);
     
-        // Add datasets for each implementation
-        ['naive', 'sharedMemory', 'vectorized'].forEach(implType => {
-            if (!results[implType] || results[implType].length === 0) return;
+        // Track top configurations and their performance
+        const trackedConfigs = new Map();
     
-            const configs = [...new Set(results[implType]
-                .filter(r => r.verified)
-                .map(r => `${r.workgroupSize}${r.tileSize ? ',' + r.tileSize : ''}`)
-            )];
+        // For each size, identify and track the top 3 configurations
+        matrixSizes.forEach(size => {
+            const sizeResults = [
+                ...results.naive.filter(r => r.verified && r.size === size),
+                ...results.sharedMemory.filter(r => r.verified && r.size === size),
+                ...results.vectorized.filter(r => r.verified && r.size === size),
+                ...results.coarsened.filter(r => r.verified && r.size === size),
+                ...results.oneDTiling.filter(r => r.verified && r.size === size)
+            ].sort((a, b) => a.time - b.time);
     
-            configs.forEach(config => {
-                const [workgroupSize, tileSize] = config.split(',');
-                const implResults = results[implType].filter(r =>
-                    r.verified &&
-                    r.workgroupSize === workgroupSize && 
-                    (tileSize ? r.tileSize === tileSize : true)
-                );
-    
-                if (implResults.length > 0) {
-                    implResults.sort((a, b) => a.size - b.size);
-    
-                    const label = implType === 'naive' ? 
-                        `Naive WG ${workgroupSize.replace(',', 'x')}` :
-                        `${implType === 'vectorized' ? 'Vectorized' : 'Shared Memory'} WG ${workgroupSize.replace(',', 'x')}${tileSize ? ' Tile ' + tileSize.replace(',', 'x') : ''}`;
-    
-                    datasets.push({
-                        label: label,
-                        data: implResults.map(r => ({
-                            x: r.size,
-                            y: r.time
-                        })),
-                        borderColor: colors[colorIndex % colors.length],
-                        backgroundColor: colors[colorIndex % colors.length].replace('rgb', 'rgba').replace(')', ', 0.1)'),
-                        borderDash: implType === 'vectorized' ? [5, 5] : [],
-                        tension: 0.1,
-                        fill: false
+            // Take top 3 for this size
+            const top3 = sizeResults.slice(0, 3);
+            
+            top3.forEach(result => {
+                const configKey = formatConfigForLegend(result);
+                if (!trackedConfigs.has(configKey)) {
+                    trackedConfigs.set(configKey, {
+                        label: configKey,
+                        data: [],
+                        firstSeenAtSize: size,
+                        implementation: result.implementation,
+                        workgroupSize: result.workgroupSize,
+                        tileSize: result.tileSize,
+                        coarsenX: result.coarsenX,
+                        coarsenY: result.coarsenY,
+                        tilingMultiplier: result.tilingMultiplier
                     });
-                    colorIndex++;
                 }
             });
         });
     
+        // Now collect all performance data for tracked configurations
+        trackedConfigs.forEach((config, configKey) => {
+            matrixSizes.forEach(size => {
+                // Only collect data for sizes >= when config first appeared as top 3
+                if (size >= config.firstSeenAtSize) {
+                    let result;
+                    switch (config.implementation) {
+                        case 'Naive':
+                            result = results.naive.find(r => 
+                                r.verified && 
+                                r.size === size && 
+                                r.workgroupSize === config.workgroupSize
+                            );
+                            break;
+                        case 'Shared Memory':
+                            result = results.sharedMemory.find(r => 
+                                r.verified && 
+                                r.size === size && 
+                                r.workgroupSize === config.workgroupSize && 
+                                r.tileSize === config.tileSize
+                            );
+                            break;
+                        case 'Vectorized':
+                            result = results.vectorized.find(r => 
+                                r.verified && 
+                                r.size === size && 
+                                r.workgroupSize === config.workgroupSize && 
+                                r.tileSize === config.tileSize
+                            );
+                            break;
+                        case 'Coarsened':
+                            result = results.coarsened.find(r => 
+                                r.verified && 
+                                r.size === size && 
+                                r.workgroupSize === config.workgroupSize && 
+                                r.tileSize === config.tileSize &&
+                                r.coarsenX === config.coarsenX &&
+                                r.coarsenY === config.coarsenY
+                            );
+                            break;
+                        case '1D Tiling':
+                            result = results.oneDTiling.find(r => 
+                                r.verified && 
+                                r.size === size && 
+                                r.workgroupSize === config.workgroupSize && 
+                                r.tilingMultiplier === config.tilingMultiplier
+                            );
+                            break;
+                    }
+                    if (result) {
+                        config.data.push({
+                            x: size,
+                            y: result.time
+                        });
+                    }
+                }
+            });
+        });
+    
+        // Create datasets from tracked configurations
+        const datasets = Array.from(trackedConfigs.values())
+            .map((config, index) => ({
+                label: config.label,
+                data: config.data,
+                borderColor: colors[index % colors.length],
+                backgroundColor: colors[index % colors.length].replace('rgb', 'rgba').replace(')', ', 0.1)'),
+                tension: 0.1,
+                fill: false
+            }))
+            .sort((a, b) => {
+                // Sort by performance at last measured point
+                const aLastValue = a.data[a.data.length - 1]?.y || Infinity;
+                const bLastValue = b.data[b.data.length - 1]?.y || Infinity;
+                return aLastValue - bLastValue;
+            });
+    
         benchmarkChart = new Chart(ctx, {
             type: 'line',
             data: {
-                datasets: datasets
+                labels: matrixSizes.map(size => `${size}x${size}`),
+                datasets
             },
             options: {
                 responsive: true,
+                maintainAspectRatio: false,
                 scales: {
                     x: {
-                        type: 'linear',
+                        type: 'category',
                         position: 'bottom',
                         title: {
                             display: true,
-                            text: 'Matrix Size'
+                            text: 'Matrix Size',
+                            padding: 10
                         },
                         ticks: {
-                            callback: function(value) {
-                                return `${value}x${value}`;
-                            }
+                            autoSkip: false
                         }
                     },
                     y: {
                         type: 'logarithmic',
                         title: {
                             display: true,
-                            text: 'Time (ms)'
+                            text: 'Time (ms)',
+                            padding: 10
                         }
                     }
                 },
                 plugins: {
                     title: {
                         display: true,
-                        text: 'Matrix Multiplication Performance Comparison'
+                        text: 'Top Performing Kernel Configurations',
+                        padding: {
+                            top: 10,
+                            bottom: 20
+                        }
                     },
                     tooltip: {
                         callbacks: {
                             label: function(context) {
-                                const label = context.dataset.label || '';
-                                const value = context.parsed.y?.toFixed(2) || '';
-                                return `${label}: ${value} ms`;
+                                return `${context.dataset.label}: ${context.parsed.y.toFixed(2)} ms`;
                             }
                         }
+                    },
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            boxWidth: 12,
+                            padding: 15,
+                            font: {
+                                size: 11
+                            }
+                        }
+                    }
+                },
+                layout: {
+                    padding: {
+                        top: 10,
+                        right: 20,
+                        bottom: 20,
+                        left: 10
                     }
                 }
             }
@@ -1018,7 +1160,8 @@
             ...results.naive.filter(r => r.verified),
             ...results.sharedMemory.filter(r => r.verified),
             ...results.vectorized.filter(r => r.verified),
-            ...results.coarsened.filter(r => r.verified) 
+            ...results.coarsened.filter(r => r.verified),
+            ...results.oneDTiling.filter(r => r.verified)
         ];
     
         const getImplementationColor = (implementation, alpha = 0.8) => {
@@ -1026,7 +1169,8 @@
                 'Naive': `rgba(255, 99, 132, ${alpha})`,
                 'Shared Memory': `rgba(54, 162, 235, ${alpha})`,
                 'Vectorized': `rgba(75, 192, 192, ${alpha})`,
-		'Coarsened': `rgba(153, 102, 255, ${alpha})`
+                'Coarsened': `rgba(153, 102, 255, ${alpha})`,
+                '1D Tiling': `rgba(255, 159, 64, ${alpha})`
             };
             return colors[implementation] || `rgba(201, 203, 207, ${alpha})`;
         };
@@ -1050,16 +1194,28 @@
             const maxTime = Math.max(...sizeResults.map(r => r.time));
             const yAxisMax = Math.ceil(maxTime * 1.1);
     
+            const getConfigLabel = (result) => {
+                const implementation = result.implementation;
+                const workgroupSize = result.workgroupSize.replace(',', 'x');
+                let configDetails = '';
+    
+                if (result.tileSize && result.tileSize !== 'N/A') {
+                    configDetails += ` Tile(${result.tileSize.replace(',', 'x')})`;
+                }
+                if (result.coarsenX && result.coarsenY) {
+                    configDetails += ` Coarse(${result.coarsenX}x${result.coarsenY})`;
+                }
+                if (result.tilingMultiplier) {
+                    configDetails += ` TM(${result.tilingMultiplier}x)`;
+                }
+                
+                return `${implementation} ${workgroupSize}${configDetails}`;
+            };
+    
             new Chart(canvas, {
                 type: 'bar',
                 data: {
-                    labels: sizeResults.map(r => {
-                        const implementation = r.implementation;
-                        const workgroupSize = r.workgroupSize.replace(',', 'x');
-                        const tileSize = r.tileSize === 'N/A' ? '' : ` (Tile: ${r.tileSize.replace(',', 'x')})`;
-                        const vectorized = r.implementation === 'Vectorized' ? ' (Vec)' : '';
-                        return `${implementation} ${workgroupSize}${tileSize}${vectorized}`;
-                    }),
+                    labels: sizeResults.map(r => getConfigLabel(r)),
                     datasets: [{
                         label: 'Execution Time',
                         data: sizeResults.map(r => r.time),
@@ -1091,7 +1247,12 @@
                         tooltip: {
                             callbacks: {
                                 label: function(context) {
-                                    return `Time: ${context.raw.toFixed(2)} ms`;
+                                    const result = sizeResults[context.dataIndex];
+                                    let label = `Time: ${context.raw.toFixed(2)} ms`;
+                                    if (result.gflops) {
+                                        label += `\nGFLOPS: ${result.gflops.toFixed(2)}`;
+                                    }
+                                    return label;
                                 }
                             }
                         }
@@ -1108,7 +1269,7 @@
                         x: {
                             title: {
                                 display: true,
-                                text: 'Method & Sizes'
+                                text: 'Method & Configuration'
                             },
                             ticks: {
                                 maxRotation: 45,
@@ -1127,37 +1288,55 @@
         tbody.innerHTML = '';
     
         matrixSizes.forEach(size => {
+            // Collect all results for this size
             const sizeResults = [
                 ...results.naive.filter(r => r.verified && r.size === size),
                 ...results.sharedMemory.filter(r => r.verified && r.size === size),
                 ...results.vectorized.filter(r => r.verified && r.size === size),
-		...results.coarsened.filter(r => r.verified && r.size === size)
+                ...results.coarsened.filter(r => r.verified && r.size === size),
+                ...results.oneDTiling.filter(r => r.verified && r.size === size)
             ].sort((a, b) => a.time - b.time);
     
             if (sizeResults.length === 0) return;
     
             const row = document.createElement('tr');
-            
+                
             // Matrix size cell
             const sizeCell = document.createElement('td');
             sizeCell.textContent = `${size}x${size}`;
             row.appendChild(sizeCell);
     
+            // Function to format the method description
+            function formatMethodDescription(result) {
+                let desc = result.implementation;
+                desc += ` (${result.workgroupSize.replace(',', 'x')})`;
+                
+                if (result.implementation === '1D Tiling') {
+                    if (result.tilingMultiplier) {
+                        desc += ` TM(${result.tilingMultiplier}x)`;
+                    }
+                } else {
+                    if (result.tileSize && result.tileSize !== 'N/A') {
+                        desc += ` Tile(${result.tileSize.replace(',', 'x')})`;
+                    }
+                    if (result.coarsenX && result.coarsenY) {
+                        desc += ` Coarse(${result.coarsenX}x${result.coarsenY})`;
+                    }
+                }
+                return desc;
+            }
+    
             // Add top 3 performers
             for (let i = 0; i < 3; i++) {
-                const result = sizeResults[i];
-                if (result) {
-                    // Combined method and config cell
+                if (i < sizeResults.length) {
+                    const result = sizeResults[i];
+                    
+                    // Method cell
                     const methodCell = document.createElement('td');
                     methodCell.className = 'method-cell';
-                    const implementation = result.implementation === 'Shared Memory' ?
-                        'sharedMemory' : result.implementation.toLowerCase();
-                    const tileConfig = result.tileSize && result.tileSize !== 'N/A' ? 
-                        ` Tile(${result.tileSize.replace(',', 'x')})` : '';
-                    const coarseningConfig = result.implementation === 'Coarsened' ?
-                        ` Coarse(${result.coarsenX}x${result.coarsenY})` : '';
-                    methodCell.textContent = `${implementation} (${result.workgroupSize.replace(',', 'x')})${tileConfig}${coarseningConfig}`;
+                    methodCell.textContent = formatMethodDescription(result);
                     row.appendChild(methodCell);
+    
                     // Time cell
                     const timeCell = document.createElement('td');
                     timeCell.className = 'time-cell';
@@ -1165,15 +1344,22 @@
                     row.appendChild(timeCell);
                 } else {
                     // Empty cells if no result
-                    row.appendChild(document.createElement('td')).textContent = 'N/A';
-                    row.appendChild(document.createElement('td')).textContent = 'N/A';
+                    const methodCell = document.createElement('td');
+                    methodCell.className = 'method-cell';
+                    methodCell.textContent = 'N/A';
+                    row.appendChild(methodCell);
+    
+                    const timeCell = document.createElement('td');
+                    timeCell.className = 'time-cell';
+                    timeCell.textContent = 'N/A';
+                    row.appendChild(timeCell);
                 }
             }
     
             tbody.appendChild(row);
         });
     }
-    
+	
     // Generate matrices
     async function generateMatrices(sizes) {
         for (const N of sizes) {
