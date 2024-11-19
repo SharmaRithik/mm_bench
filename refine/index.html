@@ -227,23 +227,33 @@
             </div>
 
             <div class="config-section">
+                <div class="section-header">
+                    <h4>Kernels</h4>
+                    <div class="button-group">
+                        <button class="small-button" onclick="handleKernels('reset')">Reset</button>
+                        <button class="small-button" onclick="handleKernels('selectAll')">Select All</button>
+                    </div>
+                </div>
                 <div class="implementation-selector">
-                    <h4>Kernels:</h4>
                     <label>
-                        <input type="checkbox" id="naiveImplementation" checked>
+                        <input type="checkbox" id="naiveImplementation">
                         Naive
                     </label>
                     <label>
-                        <input type="checkbox" id="sharedMemoryImplementation" checked>
+                        <input type="checkbox" id="sharedMemoryImplementation">
                         Shared Memory Tiling
                     </label>
                     <label>
-                        <input type="checkbox" id="vectorizedImplementation" checked>
+                        <input type="checkbox" id="vectorizedImplementation">
                         Vectorized
                     </label>
                     <label>
-                        <input type="checkbox" id="coarsenedImplementation" checked>
+                        <input type="checkbox" id="coarsenedImplementation">
                         Coarsened
+                    </label>
+                    <label>
+                        <input type="checkbox" id="oneDTilingImplementation">
+                        1D Tiling
                     </label>
                 </div>
             </div>
@@ -296,7 +306,8 @@
     </div>
 
     <script>
-// Configuration
+
+    // Configuration
     const matrixSizes = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
 
     // Generate workgroup sizes based on the specified logic
@@ -317,7 +328,9 @@
     let results = {
         naive: [],
         sharedMemory: [],
-        vectorized: []
+        vectorized: [],
+	coarsened: [],
+	oneDTiling: []
     };
 
     // Generate tile sizes for a given workgroup size
@@ -352,6 +365,11 @@
         }
     }
 
+    const tileMultiplierSizes = [];
+    for (let x = 0; x <= 4; x++) { 
+        tileMultiplierSizes.push(Math.pow(2, x));
+    }
+
     // Update validation function for tile size compatibility
     function isTileSizeCompatibleWithWorkgroup(tileSize, workgroupSize) {
         const [tileWidth, tileHeight] = tileSize.split(',').map(Number);
@@ -383,6 +401,18 @@
                 ${size.replace(',', 'x')}
             </label>
         `).join('');
+    }
+
+    function handleKernels(action) {
+        const checkboxes = document.querySelectorAll('.implementation-selector input[type="checkbox"]');
+        checkboxes.forEach(checkbox => {
+            if (action === 'selectAll') {
+                checkbox.checked = true;
+            } else if (action === 'reset') {
+                // Set default state
+                checkbox.checked = [].includes(checkbox.id);
+            }
+        });
     }
 
     // Naive WGSL implementation
@@ -750,6 +780,103 @@
         `;
     }
 
+    function get1DSharedMemoryTilingWGSL(workgroupSize, tilingMultiplier) {
+        const [THREADS_X, THREADS_Y] = workgroupSize.split(',').map(Number);
+        const TM = Number(tilingMultiplier);
+        const TILE_X = THREADS_X; 
+        const TILE_Y = THREADS_Y * TM; 
+    
+        return `
+            @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+            @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+            @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+            @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+    
+            struct Uniforms {
+                N : u32,
+                alpha : f32,
+                beta : f32,
+            }
+    
+            const THREADS_X = ${THREADS_X}u;
+            const THREADS_Y = ${THREADS_Y}u;
+            const TM = ${TM}u;
+            const TILE_X = THREADS_X;
+            const TILE_Y = THREADS_Y * TM;
+    
+            fn index1D(row: u32, col: u32, stride: u32) -> u32 {
+                return row * stride + col;
+            }
+    
+            var<workgroup> A_shared: array<f32, ${THREADS_X * THREADS_Y * TM}>;
+            var<workgroup> B_shared: array<f32, ${TILE_X * TILE_X}>;
+    
+            @compute @workgroup_size(${THREADS_X}, ${THREADS_Y})
+            fn main(
+                @builtin(global_invocation_id) global_id: vec3<u32>,
+                @builtin(local_invocation_id) local_id: vec3<u32>,
+                @builtin(workgroup_id) workgroup_id: vec3<u32>
+            ) {
+                let N = uniforms.N;
+                let wg_row = workgroup_id.y;
+                let wg_col = workgroup_id.x;
+                let local_row = local_id.y;
+                let local_col = local_id.x;
+    
+                var thread_results: array<f32, ${TM}>;
+                for (var t = 0u; t < TM; t = t + 1u) {
+                    thread_results[t] = 0.0;
+                }
+    
+                for (var tile = 0u; tile < N; tile = tile + TILE_X) {
+                    let shared_base_idx = (local_row * TM) * TILE_X + local_col;
+                    for (var extra = 0u; extra < TM; extra = extra + 1u) {
+                        let global_row = wg_row * TILE_Y + (local_row * TM) + extra;
+                        let global_col = tile + local_col;
+    
+                        if (global_row < N && global_col < N) {
+                            A_shared[shared_base_idx + extra * TILE_X] = matrixA[global_row * N + global_col];
+                        } else {
+                            A_shared[shared_base_idx + extra * TILE_X] = 0.0;
+                        }
+                    }
+    
+                    let b_shared_idx = index1D(local_row, local_col, TILE_X);
+                    let b_global_row = tile + local_row;
+                    let b_global_col = wg_col * TILE_X + local_col;
+    
+                    if (b_global_row < N && b_global_col < N) {
+                        B_shared[b_shared_idx] = matrixB[b_global_row * N + b_global_col];
+                    } else {
+                        B_shared[b_shared_idx] = 0.0;
+                    }
+    
+                    workgroupBarrier();
+    
+                    for (var k = 0u; k < TILE_X; k = k + 1u) {
+                        let b_val = B_shared[index1D(k, local_col, TILE_X)];
+                        for (var t = 0u; t < TM; t = t + 1u) {
+                            let a_val = A_shared[index1D(local_row * TM + t, k, TILE_X)];
+                            thread_results[t] += a_val * b_val;
+                        }
+                    }
+    
+                    workgroupBarrier();
+                }
+    
+                for (var t = 0u; t < TM; t = t + 1u) {
+                    let global_row = wg_row * TILE_Y + local_row * TM + t;
+                    let global_col = wg_col * TILE_X + local_col;
+    
+                    if (global_row < N && global_col < N) {
+                        let idx = global_row * N + global_col;
+                        matrixC[idx] = uniforms.alpha * thread_results[t] + uniforms.beta * matrixC[idx];
+                    }
+                }
+            }
+        `;
+    }
+
     // Initialize WebGPU
     async function initWebGPU() {
         if (!navigator.gpu) {
@@ -790,7 +917,8 @@
             ...results.naive.filter(r => r.verified),
             ...results.sharedMemory.filter(r => r.verified),
             ...results.vectorized.filter(r => r.verified),
-            ...results.coarsened.filter(r => r.verified)
+            ...results.coarsened.filter(r => r.verified),
+	    ...results.oneDTiling.filter(r => r.verified)
         ].map(r => r.size))].sort((a, b) => a - b);
     
         // Add datasets for each implementation
@@ -1085,7 +1213,7 @@
     }
 
     // Run benchmark
-    async function runBenchmark(N, workgroupSize, implementation = 'naive', tileSize = null, coarsenX = null, coarsenY = null ) {
+    async function runBenchmark(N, workgroupSize, implementation = 'naive', tileSize = null, coarsenX = null, coarsenY = null, tilingMultiplier = null) {
         let shaderCode;
         switch(implementation) {
             case 'naive':
@@ -1099,6 +1227,9 @@
                 break;
             case 'coarsened':
                 shaderCode = getCoarsenedSharedMemoryWGSL(workgroupSize, tileSize, coarsenX, coarsenY);
+                break;
+            case '1dtiling':
+                shaderCode = get1DSharedMemoryTilingWGSL(workgroupSize, tilingMultiplier);  // Fixed this line
                 break;
             default:
                 throw new Error('Unknown implementation');
@@ -1201,32 +1332,37 @@
         const selectedCoarseningSizes = Array.from(document.querySelectorAll('#coarseningSizes input:checked'))
             .map(cb => cb.value);
 
+        const selectedTileMultipliers = Array.from(document.querySelectorAll('#tileMultiplierSizes input:checked'))
+            .map(cb => parseInt(cb.value));
+
         const runNaive = document.getElementById('naiveImplementation').checked;
         const runSharedMemory = document.getElementById('sharedMemoryImplementation').checked;
         const runVectorized = document.getElementById('vectorizedImplementation').checked;
         const runCoarsened = document.getElementById('coarsenedImplementation').checked;
+	const runOneDTiling = document.getElementById('oneDTilingImplementation').checked;
 
         if (selectedWorkgroups.length === 0) {
             alert('Please select at least one workgroup size');
             return;
         }
     
-        if ((runSharedMemory || runVectorized || runCoarsened) && selectedTileSizes.length === 0) {
-            alert('Please select at least one tile size for Shared Memory, Vectorized, or Coarsened implementation');
+        if ((runSharedMemory || runVectorized || runCoarsened || runOneDTiling) && selectedTileSizes.length === 0) {
+            alert('Please select at least one tile size for Shared Memory, Vectorized, Coarsened, or 1D Tiling implementation');
             return;
         }
     
-        if (runCoarsened && selectedCoarseningSizes.length === 0) {
-            alert('Please select at least one coarsening size for Coarsened implementation');
-            return;
-        }
-    
-        if (!runNaive && !runSharedMemory && !runVectorized && !runCoarsened) {
+        if (!runNaive && !runSharedMemory && !runVectorized && !runCoarsened && !runOneDTiling) {
             alert('Please select at least one kernel');
             return;
         }
 
-        results = { naive: [], sharedMemory: [], vectorized: [], coarsened: []};
+        results = { 
+            naive: [], 
+            sharedMemory: [], 
+            vectorized: [], 
+            coarsened: [],
+            oneDTiling: []
+        };
 
         const resultsTable = document.getElementById('resultsTable');
         resultsTable.innerHTML = `
@@ -1238,6 +1374,7 @@
                         <th>Workgroup Size</th>
                         <th>Tile Size</th>
                         <th>Vectorized</th>
+                        <th>Tile Multiplier</th>
                         <th>Average Time (ms)</th>
                         <th>GFLOPS</th>
                         <th>Verified</th>
@@ -1247,11 +1384,11 @@
             </table>
         `;
         const tbody = resultsTable.querySelector('tbody');
-
+	    
         // Helper function for running implementation
-        async function runImplementation(type, size, workgroupSize, tileSize = null, coarsenX = null, coarsenY = null) {
+        async function runImplementation(type, size, workgroupSize, tileSize = null, coarsenX = null, coarsenY = null, tilingMultiplier = null) {
             // Warm-up run
-            await runBenchmark(size, workgroupSize, type, tileSize, coarsenX, coarsenY);
+            await runBenchmark(size, workgroupSize, type, tileSize, coarsenX, coarsenY, tilingMultiplier);
         
             let totalTime = 0;
             let allVerified = true;
@@ -1260,10 +1397,11 @@
                 const result = await runBenchmark(
                     size, 
                     workgroupSize, 
-                    type === 'coarsened' ? 'coarsened' : type, 
+                    type, 
                     tileSize,
                     coarsenX,
-                    coarsenY
+                    coarsenY,
+                    tilingMultiplier
                 );
                 totalTime += result.time;
                 allVerified = allVerified && result.verified;
@@ -1296,15 +1434,16 @@
                             verified: result.verified
                         });
 
-                        tbody.insertRow().innerHTML = `
-                            <td>Naive</td>
-                            <td>${size}x${size}</td>
-                            <td>${workgroupSize.replace(',', 'x')}</td>
-                            <td>N/A</td>
-                            <td>N/A</td>
-                            <td>${result.avgTime.toFixed(2)}</td>
-                            <td>${result.gflops.toFixed(2)}</td>
-                            <td>${result.verified ? '✓' : '✗'}</td>
+                         tbody.insertRow().innerHTML = `
+                             <td>Naive</td>
+                             <td>${size}x${size}</td>
+                             <td>${workgroupSize.replace(',', 'x')}</td>
+                             <td>N/A</td>
+                             <td>No</td>
+                             <td>N/A</td>
+                             <td>${result.avgTime.toFixed(2)}</td>
+                             <td>${result.gflops.toFixed(2)}</td>
+                             <td>${result.verified ? '✓' : '✗'}</td>
                         `;
                     } catch (error) {
                         console.error('Error in naive implementation:', error);
@@ -1338,6 +1477,7 @@
                                 <td>${size}x${size}</td>
                                 <td>${workgroupSize.replace(',', 'x')}</td>
                                 <td>${tileSize.replace(',', 'x')}</td>
+                                <td>No</td>
                                 <td>N/A</td>
                                 <td>${result.avgTime.toFixed(2)}</td>
                                 <td>${result.gflops.toFixed(2)}</td>
@@ -1381,6 +1521,7 @@
                                 <td>${workgroupSize.replace(',', 'x')}</td>
                                 <td>${tileSize.replace(',', 'x')}</td>
                                 <td>Yes</td>
+                                <td>N/A</td>
                                 <td>${result.avgTime.toFixed(2)}</td>
                                 <td>${result.gflops.toFixed(2)}</td>
                                 <td>${result.verified ? '✓' : '✗'}</td>
@@ -1422,6 +1563,7 @@
                                     <td>${size}x${size}</td>
                                     <td>${workgroupSize.replace(',', 'x')}</td>
                                     <td>${tileSize.replace(',', 'x')}</td>
+                                    <td>No</td>
                                     <td>N/A</td>
                                     <td>${result.avgTime.toFixed(2)}</td>
                                     <td>${result.gflops.toFixed(2)}</td>
@@ -1430,6 +1572,43 @@
                             } catch (error) {
                                 console.error('Error in coarsened implementation:', error);
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (runOneDTiling) {
+            for (const size of selectedSizes) {
+                for (const workgroupSize of selectedWorkgroups) {
+                    for (const tm of selectedTileMultipliers) {
+                        try {
+                            const result = await runImplementation('1dtiling', size, workgroupSize, null, null, null, tm);
+                            
+                            results.oneDTiling.push({
+                                implementation: '1D Tiling',
+                                size,
+                                workgroupSize,
+                                tileSize: `${tm}x`,
+                                tilingMultiplier: tm,
+                                time: parseFloat(result.avgTime.toFixed(2)),
+                                gflops: parseFloat(result.gflops.toFixed(2)),
+                                verified: result.verified
+                            });
+       
+                            tbody.insertRow().innerHTML = `
+                                <td>1D Tiling</td>
+                                <td>${size}x${size}</td>
+                                <td>${workgroupSize.replace(',', 'x')}</td>
+                                <td>N/A</td>
+                                <td>No</td>
+                                <td>${tm}x</td>
+                                <td>${result.avgTime.toFixed(2)}</td>
+                                <td>${result.gflops.toFixed(2)}</td>
+                                <td>${result.verified ? '✓' : '✗'}</td>
+                            `;
+                        } catch (error) {
+                            console.error('Error in 1D Tiling implementation:', error);
                         }
                     }
                 }
@@ -1447,7 +1626,12 @@
             'Implementation,Matrix Size,Workgroup Size,Tile Size,Vectorized,Time (ms),GFLOPS,Verified'
         ];
 
-        [...results.naive, ...results.sharedMemory, ...results.vectorized, ...results.coarsened].forEach(result => {
+        [...results.naive, 
+         ...results.sharedMemory, 
+         ...results.vectorized, 
+         ...results.coarsened,
+         ...results.oneDTiling
+        ].forEach(result => {
             const coarsening = result.implementation === 'Coarsened' ? 
                 `${result.coarsenX}x${result.coarsenY}` : 'N/A';
             csv.push(`${result.implementation},${result.size},${result.workgroupSize},${result.tileSize},${coarsening},${result.time.toFixed(2)},${result.gflops.toFixed(2)},${result.verified}`);
@@ -1544,6 +1728,28 @@
             `;
             document.querySelector('.implementation-selector').parentNode.before(coarseningConfig);
     
+            const tileMultiplierConfig = document.createElement('div');
+            tileMultiplierConfig.className = 'config-section';
+            tileMultiplierConfig.innerHTML = `
+                <div class="section-header">
+                    <h4>Tile Multiplier Sizes</h4>
+                    <div class="button-group">
+                        <button class="small-button" onclick="handleTileMultiplierSizes('reset')">Reset</button>
+                        <button class="small-button" onclick="handleTileMultiplierSizes('selectAll')">Select All</button>
+                    </div>
+                </div>
+                <div id="tileMultiplierSizes" class="options-grid">
+                    ${tileMultiplierSizes.map(tm => `
+                        <label>
+                            <input type="checkbox" value="${tm}" ${tm === 4 ? 'checked' : ''}>
+                            ${tm}x
+                        </label>
+                    `).join('')}
+                </div>
+            `;
+            
+            document.querySelector('.implementation-selector').parentNode.before(tileMultiplierConfig);
+
             // Event listeners for buttons
             document.getElementById('generateMatrices').addEventListener('click', async () => {
                 const selectedSizes = Array.from(document.querySelectorAll('#sizeCheckboxes input:checked'))
@@ -1624,6 +1830,16 @@
         });
     }
 
+    function handleTileMultiplierSizes(action) {
+        const checkboxes = document.querySelectorAll('#tileMultiplierSizes input[type="checkbox"]');
+        checkboxes.forEach(checkbox => {
+            if (action === 'selectAll') {
+                checkbox.checked = true;
+            } else if (action === 'reset') {
+                checkbox.checked = parseInt(checkbox.value) === 4;
+            }
+        });
+    }
     window.addEventListener('load', initialize);
     </script>
 </body>
