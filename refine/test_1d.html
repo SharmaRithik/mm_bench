@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>1D Tiling Matrix Multiplication Debug</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .matrix-container {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .matrix {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .matrix-table {
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        .matrix-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: right;
+            width: 60px;
+        }
+        .controls {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        button {
+            padding: 8px 16px;
+            margin: 5px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        input, select {
+            padding: 5px;
+            margin: 5px;
+        }
+        .error {
+            color: red;
+            margin-top: 10px;
+        }
+        .matrix-label {
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        .verification {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .success {
+            background-color: #dff0d8;
+            color: #3c763d;
+        }
+        .failure {
+            background-color: #f2dede;
+            color: #a94442;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>1D Tiling Matrix Multiplication Debug</h1>
+        
+        <div class="controls">
+            <div>
+                <label>Matrix Size:</label>
+                <select id="matrixSize">
+                    <option value="4">4x4</option>
+                    <option value="8">8x8</option>
+                    <option value="16">16x16</option>
+                </select>
+                
+                <label>Workgroup Size:</label>
+                <select id="workgroupSize">
+                    <option value="2,2">2x2</option>
+                    <option value="4,4">4x4</option>
+                    <option value="8,8">8x8</option>
+                    <option value="16,16">16x16</option>
+                </select>
+
+                <label>Tile Multiplier:</label>
+                <select id="tileMultiplier">
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="4">4</option>
+                </select>
+            </div>
+            <div>
+                <button onclick="generateMatrices()">Generate Random Matrices</button>
+                <button onclick="runMultiplication()">Run Multiplication</button>
+                <button onclick="verifyResults()">Verify Results</button>
+            </div>
+        </div>
+
+        <div class="matrix-container">
+            <div class="matrix">
+                <div class="matrix-label">Matrix A</div>
+                <table id="matrixA" class="matrix-table"></table>
+            </div>
+            <div class="matrix">
+                <div class="matrix-label">Matrix B</div>
+                <table id="matrixB" class="matrix-table"></table>
+            </div>
+            <div class="matrix">
+                <div class="matrix-label">Result Matrix</div>
+                <table id="matrixC" class="matrix-table"></table>
+            </div>
+            <div class="matrix">
+                <div class="matrix-label">Expected Result</div>
+                <table id="matrixExpected" class="matrix-table"></table>
+            </div>
+        </div>
+        
+        <div id="verificationResult"></div>
+    </div>
+
+    <script>
+
+
+function get1DSharedMemoryTilingWGSL(workgroupSize, tilingMultiplier) {
+    const [THREADS_X, THREADS_Y] = workgroupSize.split(',').map(Number);
+    const TM = Number(tilingMultiplier);
+    const TILE_X = THREADS_X;
+    const TILE_Y = THREADS_Y;
+    const TILE_X_VEC4 = Math.ceil(TILE_X / 4) * 4;
+
+    return `
+        @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+        @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+        @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+        @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+
+        struct Uniforms {
+            N : u32,
+            alpha : f32,
+            beta : f32,
+        }
+
+        const THREADS_X = ${THREADS_X}u;
+        const THREADS_Y = ${THREADS_Y}u;
+        const TM = ${TM}u;
+        const TILE_X = ${TILE_X}u;
+        const TILE_Y = ${TILE_Y}u;
+        const TILE_X_VEC4 = ${TILE_X_VEC4}u;
+
+        var<workgroup> As: array<vec4<f32>, ${(TILE_X_VEC4 / 4) * TILE_Y * TM}>;
+        var<workgroup> Bs: array<vec4<f32>, ${(TILE_X_VEC4 / 4) * TILE_Y}>;
+
+        fn loadVec4(baseIndex: u32, stride: u32, N: u32, isMatrixA: bool) -> vec4<f32> {
+            var v = vec4<f32>(0.0);
+            if (baseIndex < N) {
+                if (isMatrixA) {
+                    v.x = matrixA[baseIndex];
+                    if (baseIndex + stride < N) { v.y = matrixA[baseIndex + stride]; }
+                    if (baseIndex + 2u * stride < N) { v.z = matrixA[baseIndex + 2u * stride]; }
+                    if (baseIndex + 3u * stride < N) { v.w = matrixA[baseIndex + 3u * stride]; }
+                } else {
+                    v.x = matrixB[baseIndex];
+                    if (baseIndex + stride < N) { v.y = matrixB[baseIndex + stride]; }
+                    if (baseIndex + 2u * stride < N) { v.z = matrixB[baseIndex + 2u * stride]; }
+                    if (baseIndex + 3u * stride < N) { v.w = matrixB[baseIndex + 3u * stride]; }
+                }
+            }
+            return v;
+        }
+
+        @compute @workgroup_size(${THREADS_X}, ${THREADS_Y})
+        fn main(
+            @builtin(global_invocation_id) global_id: vec3<u32>,
+            @builtin(local_invocation_id) local_id: vec3<u32>,
+            @builtin(workgroup_id) workgroup_id: vec3<u32>
+        ) {
+            let N = uniforms.N;
+            let alpha = uniforms.alpha;
+            let beta = uniforms.beta;
+
+            let wg_row = workgroup_id.y;
+            let wg_col = workgroup_id.x;
+            let local_x = local_id.x;
+            let local_y = local_id.y;
+            let row_base = wg_row * (THREADS_Y * TM) + local_y;
+            let col = wg_col * THREADS_X + local_x;
+
+            // Initialize accumulators
+            var acc: array<f32, TM>;
+            for (var t = 0u; t < TM; t = t + 1u) {
+                acc[t] = 0.0;
+            }
+
+            // Process matrix in tiles
+            for (var tile = 0u; tile < N; tile = tile + TILE_X_VEC4) {
+                let max_k = min(TILE_X_VEC4, N - tile);
+
+                // Load elements from matrix A into shared memory
+                for (var tm = 0u; tm < TM; tm = tm + 1u) {
+                    let row = row_base + tm * THREADS_Y;
+                    if (row < N && local_x < max_k / 4u) {
+                        let shared_idx = tm * (TILE_X_VEC4 / 4u) * TILE_Y + local_y * (TILE_X_VEC4 / 4u) + local_x;
+                        let global_idx = row * N + tile + local_x * 4u;
+                        As[shared_idx] = loadVec4(global_idx, 1u, N * N, true);
+                    }
+                }
+
+                // Load elements from matrix B into shared memory
+                if (local_y < max_k / 4u && col < N) {
+                    let shared_idx = local_y * (TILE_X_VEC4 / 4u) + local_x;
+                    let global_idx = (tile + local_y * 4u) * N + col;
+                    Bs[shared_idx] = loadVec4(global_idx, N, N * N, false);
+                }
+
+                workgroupBarrier();
+
+                // Compute contributions to accumulators
+                for (var k = 0u; k < max_k / 4u; k = k + 1u) {
+                    let b_val = Bs[k * (TILE_X_VEC4 / 4u) + local_x];
+                    for (var tm = 0u; tm < TM; tm = tm + 1u) {
+                        let row = row_base + tm * THREADS_Y;
+                        if (row < N) {
+                            let a_val = As[tm * (TILE_X_VEC4 / 4u) * TILE_Y + local_y * (TILE_X_VEC4 / 4u) + k];
+                            acc[tm] += dot(a_val, b_val);
+                        }
+                    }
+                }
+
+                workgroupBarrier();
+            }
+
+            // Write results back to matrix C
+            for (var tm = 0u; tm < TM; tm = tm + 1u) {
+                let row = row_base + tm * THREADS_Y;
+                if (row < N && col < N) {
+                    let idx = row * N + col;
+                    matrixC[idx] = fma(alpha, acc[tm], beta * matrixC[idx]);
+                }
+            }
+        }
+    `;
+}	
+        let device, matrices = { A: null, B: null, C: null };
+
+        async function initWebGPU() {
+            if (!navigator.gpu) throw new Error('WebGPU not supported');
+            const adapter = await navigator.gpu.requestAdapter();
+            return await adapter.requestDevice();
+        }
+
+        function createBuffer(data, usage) {
+            const buffer = device.createBuffer({
+                size: data.byteLength,
+                usage: usage,
+                mappedAtCreation: true,
+            });
+            new Float32Array(buffer.getMappedRange()).set(data);
+            buffer.unmap();
+            return buffer;
+        }
+
+        function displayMatrix(matrix, N, elementId) {
+            const table = document.getElementById(elementId);
+            table.innerHTML = '';
+            for (let i = 0; i < N; i++) {
+                const row = table.insertRow();
+                for (let j = 0; j < N; j++) {
+                    const cell = row.insertCell();
+                    cell.textContent = matrix[i * N + j].toFixed(2);
+                }
+            }
+        }
+
+        function generateRandomMatrix(N) {
+            return new Float32Array(N * N).map(() => Math.random());
+        }
+
+        function generateMatrices() {
+            const N = parseInt(document.getElementById('matrixSize').value);
+            matrices.A = generateRandomMatrix(N);
+            matrices.B = generateRandomMatrix(N);
+            matrices.C = new Float32Array(N * N).fill(0);
+            
+            displayMatrix(matrices.A, N, 'matrixA');
+            displayMatrix(matrices.B, N, 'matrixB');
+            displayMatrix(matrices.C, N, 'matrixC');
+        }
+
+        async function runMultiplication() {
+            if (!matrices.A || !matrices.B) {
+                alert('Please generate matrices first');
+                return;
+            }
+
+            const N = parseInt(document.getElementById('matrixSize').value);
+            const workgroupSize = document.getElementById('workgroupSize').value;
+            const tilingMultiplier = document.getElementById('tileMultiplier').value;
+
+            const bufferA = createBuffer(matrices.A, GPUBufferUsage.STORAGE);
+            const bufferB = createBuffer(matrices.B, GPUBufferUsage.STORAGE);
+            const bufferC = createBuffer(matrices.C, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
+
+            const uniformBuffer = device.createBuffer({
+                size: 16,
+                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+            });
+
+            const uniformData = new ArrayBuffer(16);
+            new Uint32Array(uniformData, 0, 1)[0] = N;
+            new Float32Array(uniformData, 4, 1)[0] = 1.0;  // alpha
+            new Float32Array(uniformData, 8, 1)[0] = 0.0;  // beta
+            device.queue.writeBuffer(uniformBuffer, 0, uniformData);
+
+            const shaderModule = device.createShaderModule({
+                code: get1DSharedMemoryTilingWGSL(workgroupSize, tilingMultiplier)
+            });
+
+            const bindGroupLayout = device.createBindGroupLayout({
+                entries: [
+                    { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+                    { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+                    { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+                    { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+                ]
+            });
+
+            const bindGroup = device.createBindGroup({
+                layout: bindGroupLayout,
+                entries: [
+                    { binding: 0, resource: { buffer: bufferA } },
+                    { binding: 1, resource: { buffer: bufferB } },
+                    { binding: 2, resource: { buffer: bufferC } },
+                    { binding: 3, resource: { buffer: uniformBuffer } },
+                ]
+            });
+
+            const pipeline = device.createComputePipeline({
+                layout: device.createPipelineLayout({
+                    bindGroupLayouts: [bindGroupLayout]
+                }),
+                compute: {
+                    module: shaderModule,
+                    entryPoint: "main"
+                }
+            });
+
+            const commandEncoder = device.createCommandEncoder();
+            const passEncoder = commandEncoder.beginComputePass();
+            passEncoder.setPipeline(pipeline);
+            passEncoder.setBindGroup(0, bindGroup);
+
+            const [THREADS_X, THREADS_Y] = workgroupSize.split(',').map(Number);
+            passEncoder.dispatchWorkgroups(Math.ceil(N / THREADS_X), Math.ceil(N / THREADS_Y));
+            passEncoder.end();
+
+            const gpuBuffer = device.createBuffer({
+                size: matrices.C.byteLength,
+                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+            });
+
+            commandEncoder.copyBufferToBuffer(bufferC, 0, gpuBuffer, 0, matrices.C.byteLength);
+            device.queue.submit([commandEncoder.finish()]);
+
+            await gpuBuffer.mapAsync(GPUMapMode.READ);
+            matrices.C = new Float32Array(gpuBuffer.getMappedRange().slice());
+            gpuBuffer.unmap();
+
+            displayMatrix(matrices.C, N, 'matrixC');
+            computeExpectedResult();
+        }
+
+        function computeExpectedResult() {
+            const N = parseInt(document.getElementById('matrixSize').value);
+            const expected = new Float32Array(N * N);
+
+            for (let i = 0; i < N; i++) {
+                for (let j = 0; j < N; j++) {
+                    let sum = 0;
+                    for (let k = 0; k < N; k++) {
+                        sum += matrices.A[i * N + k] * matrices.B[k * N + j];
+                    }
+                    expected[i * N + j] = sum;
+                }
+            }
+
+            displayMatrix(expected, N, 'matrixExpected');
+            return expected;
+        }
+
+        function verifyResults() {
+            const N = parseInt(document.getElementById('matrixSize').value);
+            const expected = computeExpectedResult();
+	    const result = document.getElementById('verificationResult');
+            let correct = true;
+            const epsilon = 1e-6;
+
+            for (let i = 0; i < N * N; i++) {
+                const diff = Math.abs(matrices.C[i] - expected[i]);
+                if (diff > epsilon) {
+                    correct = false;
+                    console.log(`Mismatch at index ${i}: Got ${matrices.C[i]}, Expected ${expected[i]}, Diff ${diff}`);
+                }
+            }
+
+            result.className = correct ? 'verification success' : 'verification failure';
+            result.textContent = correct ? 
+                'Verification Passed: Results match expected values!' :
+                'Verification Failed: Results do not match expected values. Check console for details.';
+        }
+
+        // Initialize WebGPU when the page loads
+        window.onload = async function() {
+            try {
+                device = await initWebGPU();
+                console.log('WebGPU initialized successfully');
+            } catch (err) {
+                console.error('Failed to initialize WebGPU:', err);
+                document.body.innerHTML = `
+                    <div style="color: red; padding: 20px;">
+                        Error: ${err.message}<br>
+                        Please use a browser that supports WebGPU.
+                    </div>
+                `;
+            }
+        };
+    </script>
+</body>
+</html>
