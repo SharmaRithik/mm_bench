@@ -1,3 +1,5 @@
+
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -27,7 +29,8 @@
         }
         .chart-container {
             height: 500px;
-            margin-top: 20px;
+	    position: relative;
+	    width: 100%;
         }
         button {
             padding: 10px 20px;
@@ -40,6 +43,10 @@
         }
         button:hover {
             background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
         }
         table {
             width: 100%;
@@ -66,16 +73,18 @@
         .config-section h4 {
             margin-top: 0;
         }
-        .workgroup-options {
+        .options-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
             gap: 10px;
             margin: 10px 0;
         }
-        .workgroup-options label {
+        .options-grid label {
             display: flex;
             align-items: center;
             gap: 5px;
+            font-size: 14px;
+            white-space: nowrap;
         }
         #sizeCheckboxes {
             display: flex;
@@ -85,56 +94,94 @@
         #sizeCheckboxes label {
             white-space: nowrap;
         }
-        .error {
-            color: red;
-            font-weight: bold;
-            padding: 10px;
-            margin: 10px 0;
-            background-color: #ffe6e6;
-            border-radius: 4px;
+        .button-group {
+            display: inline-flex;
+            gap: 8px;
+            align-items: center;
+            margin-left: 16px;
         }
-        .verification-success {
-            color: green;
-            font-weight: bold;
+        .section-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
         }
-        .verification-failed {
-            color: red;
-            font-weight: bold;
+        .small-button {
+            padding: 4px 8px;
+            font-size: 12px;
+            background-color: #6c757d;
         }
-        .performance-tables {
+        .bar-charts-container {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
             gap: 20px;
-            margin-top: 20px;
+            padding: 10px;
         }
-	.performance-table {
-        background: white;
-        padding: 15px;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        margin-top: 20px;
+        .bar-chart-wrapper {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            height: 400px;
         }
-       
-        .performance-table table {
+        .implementation-selector {
+            margin: 10px 0;
+        }
+        .implementation-selector label {
+            margin-right: 15px;
+        }
+        .tile-options {
+            margin-top: 10px;
+            border-top: 1px solid #eee;
+            padding-top: 10px;
+        }
+        .tile-options.disabled {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+        .tile-size-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 10px 0;
+        }
+        .performance-summary {
+            overflow-x: auto;
+        }
+        
+        #performanceSummaryTable {
             width: 100%;
             border-collapse: collapse;
+            margin-top: 10px;
         }
         
-        .performance-table th {
+        #performanceSummaryTable th,
+        #performanceSummaryTable td {
+            padding: 8px;
+            text-align: left;
+            border: 1px solid #ddd;
+        }
+        
+        #performanceSummaryTable th {
             background-color: #f8f9fa;
-            text-align: center;
-            padding: 8px;
-            border: 1px solid #ddd;
+            font-weight: bold;
         }
         
-        .performance-table td {
-            padding: 8px;
-            border: 1px solid #ddd;
-            text-align: center;
+        #performanceSummaryTable tr:nth-child(even) {
+            background-color: #f8f9fa;
         }
         
-        .performance-table th[colspan] {
-            background-color: #e9ecef;
+        #performanceSummaryTable tr:hover {
+            background-color: #f5f5f5;
+        }
+        
+        .method-cell {
+            font-weight: 500;
+        }
+        
+        .time-cell {
+            color: #666;
         }
     </style>
 </head>
@@ -148,28 +195,72 @@
         <div class="tile">
             <h3>Configuration</h3>
             <div class="config-section">
-                <h4>Matrix Sizes</h4>
+                <div class="section-header">
+                    <h4>Matrix Sizes</h4>
+                    <div class="button-group">
+                        <button class="small-button" onclick="handleMatrixSizes('reset')">Reset</button>
+                        <button class="small-button" onclick="handleMatrixSizes('selectAll')">Select All</button>
+                    </div>
+                </div>
                 <div id="sizeCheckboxes"></div>
             </div>
             
             <div class="config-section">
-                <h4>Naive Implementation Workgroups</h4>
-                <div id="naiveWorkgroups" class="workgroup-options"></div>
-            </div>
-            
-            <div class="config-section">
-                <h4>Decoupled Implementation Workgroups</h4>
-                <div id="decoupledWorkgroups" class="workgroup-options"></div>
-            </div>
-
-            <div class="config-section">
-                <h4>Vectorized Implementation Workgroups</h4>
-                <div id="vectorizedWorkgroups" class="workgroup-options"></div>
+                <div class="section-header">
+                    <h4>Workgroup Sizes</h4>
+                    <div class="button-group">
+                        <button class="small-button" onclick="handleWorkgroups('reset')">Reset</button>
+                        <button class="small-button" onclick="handleWorkgroups('selectAll')">Select All</button>
+                    </div>
+                </div>
+                <div id="workgroupSizes" class="options-grid"></div>
             </div>
 
             <div class="config-section">
-                <h4>Shared Memory Implementation Workgroups</h4>
-                <div id="sharedMemoryWorkgroups" class="workgroup-options"></div>
+                <div class="section-header">
+                    <h4>Tile Sizes</h4>
+                    <div class="button-group">
+                        <button class="small-button" onclick="handleTileSizes('reset')">Reset</button>
+                        <button class="small-button" onclick="handleTileSizes('selectAll')">Select All</button>
+                    </div>
+                </div>
+                <div id="tileSizes" class="options-grid"></div>
+            </div>
+
+            <div class="config-section">
+                <div class="section-header">
+                    <h4>Kernels</h4>
+                    <div class="button-group">
+                        <button class="small-button" onclick="handleKernels('reset')">Reset</button>
+                        <button class="small-button" onclick="handleKernels('selectAll')">Select All</button>
+                    </div>
+                </div>
+                <div class="implementation-selector">
+                    <label>
+                        <input type="checkbox" id="naiveImplementation">
+                        Naive
+                    </label>
+                    <label>
+                        <input type="checkbox" id="naiveDecoupledImplementation">
+                        DecoupledNaive
+                    </label>
+                    <label>
+                        <input type="checkbox" id="sharedMemoryImplementation">
+                        Shared Memory Tiling
+                    </label>
+                    <label>
+                        <input type="checkbox" id="vectorizedImplementation">
+                        Vectorized
+                    </label>
+                    <label>
+                        <input type="checkbox" id="coarsenedImplementation">
+                        Coarsened
+                    </label>
+                    <label>
+                        <input type="checkbox" id="oneDTilingImplementation">
+                        1D Tiling
+                    </label>
+                </div>
             </div>
 
             <div class="config-section">
@@ -197,838 +288,1806 @@
         </div>
 
         <div class="tile">
-            <h3>Top Performers by Matrix Size</h3>
-            <div id="topPerformersRoot"></div>
+            <h3>Performance by Matrix Size</h3>
+            <div id="barChartsContainer" class="bar-charts-container">
+            </div>
         </div>
-    </div>
-
-    <script>
-        // Configuration
-        const matrixSizes = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
-        const naiveWorkgroupSizes = [
-            '8,8', '16,16', '32,32'  // Square workgroups for naive implementation
-        ];
-        const decoupledWorkgroupSizes = [
-            '2,128', '4,64', '8,32', '16,16', '32,8', '64,4', '128,2'
-        ];
-
-	const vectorizedWorkgroupSizes = [
-	    '2,128', '4,64', '8,32', '16,16', '32,8', '64,4', '128,2'
-	];
-
-        const sharedMemoryWorkgroupSizes = [
-            '2,128', '4,64', '8,32', '16,16', '32,8', '64,4', '128,2'
-        ];
-
-        let device;
-        let generatedMatrices = {};
-        let benchmarkChart;
-        let results = {
-            naive: [],
-            decoupled: [],
-	    vectorized: [],
-            sharedMemory: []
-        };
-
-        // TopPerformersTable React Component
-        const TopPerformersTable = () => {
-            const getTopPerformers = (results) => {
-                const sizes = [...new Set([...results.naive, ...results.decoupled, ...results.vectorized, ...results.sharedMemory].map(r => r.size))];
-                
-                return sizes.reduce((acc, size) => {
-                    // Combine and process results for this size
-                    const sizeResults = [
-                        ...results.naive.filter(r => r.size === size).map(r => ({...r, impl: 'naive'})),
-                        ...results.decoupled.filter(r => r.size === size).map(r => ({...r, impl: 'decoupled'})),
-                        ...results.vectorized.filter(r => r.size === size).map(r => ({...r, impl: 'vectorized'})),
-                        ...results.sharedMemory.filter(r => r.size === size).map(r => ({...r, impl: 'sharedMemory'}))
-                    ];
-                    
-                    // Sort by execution time
-                    const sorted = sizeResults.sort((a, b) => a.time - b.time);
-                    acc[size] = sorted.slice(0, 3);
-                    return acc;
-                }, {});
-            };
-        
-            return React.createElement('div', { className: 'performance-table' },
-                React.createElement('table', null,
-                    React.createElement('thead', null,
-                        React.createElement('tr', null, [
-                            React.createElement('th', { key: 'size', rowSpan: 1 }, 'Matrix Size'),
-                            React.createElement('th', { key: 'best', colSpan: 2 }, 'Best Performance'),
-                            React.createElement('th', { key: 'second', colSpan: 2 }, 'Second Best'),
-                            React.createElement('th', { key: 'third', colSpan: 2 }, 'Third Best')
-                        ]),
-                        React.createElement('tr', null, [
-                            React.createElement('th', { key: 'size' }), // Empty cell for matrix size
-                            React.createElement('th', { key: 'best-method' }, 'Method'),
-                            React.createElement('th', { key: 'best-time' }, 'Time (ms)'),
-                            React.createElement('th', { key: 'second-method' }, 'Method'),
-                            React.createElement('th', { key: 'second-time' }, 'Time (ms)'),
-                            React.createElement('th', { key: 'third-method' }, 'Method'),
-                            React.createElement('th', { key: 'third-time' }, 'Time (ms)')
-                        ])
-                    ),
-                    React.createElement('tbody', null,
-                        Object.entries(getTopPerformers(results)).map(([size, performers]) =>
-                            React.createElement('tr', { key: size }, [
-                                React.createElement('td', { key: 'size' }, `${size}x${size}`),
-                                // Best performer
-                                React.createElement('td', { key: 'best-method' },
-                                    performers[0] ? `${performers[0].impl} (${performers[0].workgroupSize.replace(',', 'x')})` : 'N/A'
-                                ),
-                                React.createElement('td', { key: 'best-time' },
-                                    performers[0] ? performers[0].time.toFixed(2) : 'N/A'
-                                ),
-                                // Second best performer
-                                React.createElement('td', { key: 'second-method' },
-                                    performers[1] ? `${performers[1].impl} (${performers[1].workgroupSize.replace(',', 'x')})` : 'N/A'
-                                ),
-                                React.createElement('td', { key: 'second-time' },
-                                    performers[1] ? performers[1].time.toFixed(2) : 'N/A'
-                                ),
-                                // Third best performer
-                                React.createElement('td', { key: 'third-method' },
-                                    performers[2] ? `${performers[2].impl} (${performers[2].workgroupSize.replace(',', 'x')})` : 'N/A'
-                                ),
-                                React.createElement('td', { key: 'third-time' },
-                                    performers[2] ? performers[2].time.toFixed(2) : 'N/A'
-                                )
-                            ])
-                        )
-                    )
-                )
-            );
-        };	
-
-        // Naive WGSL implementation
-        function getNaiveWGSL(workgroupSize) {
-            const [wx, wy] = workgroupSize.split(',').map(Number);
-            return `
-                @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
-                @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
-                @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
-                @group(0) @binding(3) var<uniform> uniforms : Uniforms;
-
-                struct Uniforms {
-                    N : u32,
-                    alpha : f32,
-                    beta : f32,
-                }
-
-                @compute @workgroup_size(${wx}, ${wy})
-                fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
-                    let N = uniforms.N;
-                    let row = global_id.y;
-                    let col = global_id.x;
-
-                    if (row >= N || col >= N) {
-                        return;
-                    }
-
-                    let row_offset = row * N;
-                    var sum: f32 = 0.0;
-
-                    for (var k = 0u; k < N; k = k + 1u) {
-                        let a = matrixA[row_offset + k];
-                        let b = matrixB[k * N + col];
-                        sum = sum + a * b;
-                    }
-
-                    matrixC[row_offset + col] = uniforms.alpha * sum + uniforms.beta * matrixC[row_offset + col];
-                }
-            `;
-        }
-
-        // Decoupled WGSL implementation
-        function getNaiveDecoupledWGSL(workgroupSize) {
-            const [wx, wy] = workgroupSize.split(',').map(Number);
-            return `
-                @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
-                @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
-                @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
-                @group(0) @binding(3) var<uniform> uniforms : Uniforms;
-
-                struct Uniforms {
-                    N : u32,
-                    alpha : f32,
-                    beta : f32,
-                }
-
-                @compute @workgroup_size(${wx}, ${wy})
-                fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
-                    let N = uniforms.N;
-                    let row = global_id.y;
-                    let col = global_id.x;
-
-                    if (row >= N || col >= N) {
-                        return;
-                    }
-
-                    let row_offset = row * N;
-                    var sum: f32 = 0.0;
-
-                    for (var k = 0u; k < N; k = k + 1u) {
-                        let a = matrixA[row_offset + k];
-                        let b = matrixB[k * N + col];
-                        sum = sum + a * b;
-                    }
-
-                    matrixC[row_offset + col] = uniforms.alpha * sum + uniforms.beta * matrixC[row_offset + col];
-                }
-            `;
-        }
-
-        function getNaiveDecoupledVectorizedWGSL(workgroupSize) {
-            const [wx, wy] = workgroupSize.split(',').map(Number);
-            return `
-                @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
-                @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
-                @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
-                @group(0) @binding(3) var<uniform> uniforms : Uniforms;
-        
-                struct Uniforms {
-                    N : u32,
-                    alpha : f32,
-                    beta : f32,
-                }
-        
-                @compute @workgroup_size(${wx}, ${wy})
-                fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
-                    let N = uniforms.N;
-                    let row = global_id.y;
-                    let col = global_id.x;
-        
-                    if (row >= N || col >= N) {
-                        return;
-                    }
-        
-                    let row_offset = row * N;
-                    var sum: f32 = 0.0;
-        
-                    // Using vectorized loads and multiplies
-                    for (var k = 0u; k < N; k = k + 4u) {
-                        let a_vec = vec4<f32>(matrixA[row_offset + k], matrixA[row_offset + k + 1], matrixA[row_offset + k + 2], matrixA[row_offset + k + 3]);
-                        let b_vec = vec4<f32>(matrixB[k * N + col], matrixB[(k + 1u) * N + col], matrixB[(k + 2u) * N + col], matrixB[(k + 3u) * N + col]);
-                        
-                        sum += dot(a_vec, b_vec);
-                    }
-        
-                    matrixC[row_offset + col] = uniforms.alpha * sum + uniforms.beta * matrixC[row_offset + col];
-                }
-            `;
-        }
-        function getNaiveDecoupledSharedMemoryWGSL(workgroupSize) {
-            const [tileRows, tileCols] = workgroupSize.split(',').map(Number);
-            return `
-                @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
-                @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
-                @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
-                @group(0) @binding(3) var<uniform> uniforms : Uniforms;
-                
-                struct Uniforms {
-                    N : u32,
-                    alpha : f32,
-                    beta : f32,
-                }
-        
-                const TILE_ROWS = ${tileRows}u;
-                const TILE_COLS = ${tileCols}u;
-        
-                // Shared memory tiles for matrix A and B
-                var<workgroup> tileA: array<array<f32, TILE_ROWS>, TILE_COLS>;
-                var<workgroup> tileB: array<array<f32, TILE_ROWS>, TILE_COLS>;
-        
-                fn loadMatrixElement(row: u32, col: u32, N: u32, isA: bool) -> f32 {
-                    if (row < N && col < N) {
-                        if (isA) {
-                            return matrixA[row * N + col];
-                        } else {
-                            return matrixB[row * N + col];
-                        }
-                    }
-                    return 0.0;
-                }
-        
-                @compute @workgroup_size(${tileRows}, ${tileCols})
-                fn main(
-                    @builtin(global_invocation_id) global_id: vec3<u32>,
-                    @builtin(local_invocation_id) local_id: vec3<u32>
-                ) {
-                    let N = uniforms.N;
-                    let row = global_id.y;
-                    let col = global_id.x;
-                    let localRow = local_id.y;
-                    let localCol = local_id.x;
-        
-                    var sum = 0.0;
-        
-                    let tileDim = min(TILE_ROWS, TILE_COLS);
-                    for (var t = 0u; t < N; t += tileDim) {
-                        let tileA_row = row;
-                        let tileA_col = t + localCol;
-                        let tileB_row = t + localRow;
-                        let tileB_col = col;
-        
-                        tileA[localRow][localCol] = loadMatrixElement(tileA_row, tileA_col, N, true);
-                        tileB[localRow][localCol] = loadMatrixElement(tileB_row, tileB_col, N, false);
-        
-                        workgroupBarrier();
-        
-                        for (var k = 0u; k < tileDim; k++) {
-                            sum += tileA[localRow][k] * tileB[k][localCol];
-                        }
-                        workgroupBarrier();
-                    }
-                    if (row < N && col < N) {
-                        let index = row * N + col;
-                        matrixC[index] = uniforms.alpha * sum + uniforms.beta * matrixC[index];
-                    }
-                }
-            `;
-        }
-
-        // Initialize WebGPU
-        async function initWebGPU() {
-            if (!navigator.gpu) {
-                throw new Error("WebGPU not supported");
-            }
-            const adapter = await navigator.gpu.requestAdapter();
-            device = await adapter.requestDevice();
-            return device;
-        }
-
-        // Create buffer helper function
-        function createBuffer(data, usage) {
-            const buffer = device.createBuffer({
-                size: data.byteLength,
-                usage: usage,
-                mappedAtCreation: true,
-            });
-            new Float32Array(buffer.getMappedRange()).set(data);
-            buffer.unmap();
-            return buffer;
-        }
-
-        // Generate matrices
-        async function generateMatrices(sizes) {
-            for (const N of sizes) {
-                const matrixSize = N * N;
-                const matrixA = new Float32Array(matrixSize);
-                const matrixB = new Float32Array(matrixSize);
-
-                for (let i = 0; i < matrixSize; i++) {
-                    matrixA[i] = Math.random();
-                    matrixB[i] = Math.random();
-                }
-
-                const bufferA = createBuffer(matrixA, GPUBufferUsage.STORAGE);
-                const bufferB = createBuffer(matrixB, GPUBufferUsage.STORAGE);
-
-                generatedMatrices[N] = { bufferA, bufferB, matrixA, matrixB };
-            }
-        }
-
-        // Verify matrix multiplication
-        function verifyMatrixMultiplication(matrixA, matrixB, resultMatrix, N, alpha, beta, numChecks = 20) {
-            for (let check = 0; check < numChecks; check++) {
-                const row = Math.floor(Math.random() * N);
-                const col = Math.floor(Math.random() * N);
-                let expected = 0;
-                for (let i = 0; i < N; i++) {
-                    expected += matrixA[row * N + i] * matrixB[i * N + col];
-                }
-                expected = alpha * expected + beta * 0;
-                const actual = resultMatrix[row * N + col];
-                const relativeError = Math.abs((expected - actual) / expected);
-                if (relativeError > 1e-5) {
-                    console.error(`Verification failed at [${row}, ${col}]:`);
-                    console.error(`Expected: ${expected}, Actual: ${actual}`);
-                    return false;
-                }
-            }
-            return true;
-        }
-
-
-	    async function runBenchmark(N, implementation, workgroupSize) {
-            const shaderModule = device.createShaderModule({
-                code: implementation === 'naive'
-                    ? getNaiveWGSL(workgroupSize)
-                    : implementation === 'decoupled'
-                        ? getNaiveDecoupledWGSL(workgroupSize)
-                        : implementation === 'vectorized'
-                            ? getNaiveDecoupledVectorizedWGSL(workgroupSize)
-                            : getNaiveDecoupledSharedMemoryWGSL(workgroupSize)
-            });
-
-            const { bufferA, bufferB, matrixA, matrixB } = generatedMatrices[N];
-            const matrixSize = N * N;
-            const resultMatrix = new Float32Array(matrixSize).fill(0);
-            const bufferC = createBuffer(resultMatrix, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
-
-            const uniformBuffer = device.createBuffer({
-                size: 16,
-                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-            });
-
-            const uniformData = new ArrayBuffer(16);
-            new Uint32Array(uniformData, 0, 1)[0] = N;
-            new Float32Array(uniformData, 4, 1)[0] = 1.0;
-            new Float32Array(uniformData, 8, 1)[0] = 0.0;
-            device.queue.writeBuffer(uniformBuffer, 0, uniformData);
-
-            const bindGroupLayout = device.createBindGroupLayout({
-                entries: [
-                    { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
-                    { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
-                    { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
-                    { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
-                ],
-            });
-
-            const bindGroup = device.createBindGroup({
-                layout: bindGroupLayout,
-                entries: [
-                    { binding: 0, resource: { buffer: bufferA } },
-                    { binding: 1, resource: { buffer: bufferB } },
-                    { binding: 2, resource: { buffer: bufferC } },
-                    { binding: 3, resource: { buffer: uniformBuffer } },
-                ],
-            });
-
-            const pipeline = device.createComputePipeline({
-                layout: device.createPipelineLayout({
-                    bindGroupLayouts: [bindGroupLayout],
-                }),
-                compute: {
-                    module: shaderModule,
-                    entryPoint: "main",
-                },
-            });
-
-            const commandEncoder = device.createCommandEncoder();
-            const passEncoder = commandEncoder.beginComputePass();
-            passEncoder.setPipeline(pipeline);
-            passEncoder.setBindGroup(0, bindGroup);
-
-            const [x, y] = workgroupSize.split(',').map(Number);
-            passEncoder.dispatchWorkgroups(Math.ceil(N / x), Math.ceil(N / y));
-            passEncoder.end();
-
-            const startTime = performance.now();
-            device.queue.submit([commandEncoder.finish()]);
-            await device.queue.onSubmittedWorkDone();
-            const endTime = performance.now();
-
-            const resultReadBuffer = device.createBuffer({
-                size: bufferC.size,
-                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
-            });
-
-            const readbackEncoder = device.createCommandEncoder();
-            readbackEncoder.copyBufferToBuffer(bufferC, 0, resultReadBuffer, 0, bufferC.size);
-            device.queue.submit([readbackEncoder.finish()]);
-
-            await resultReadBuffer.mapAsync(GPUMapMode.READ);
-            const resultArray = new Float32Array(resultReadBuffer.getMappedRange());
-            const isVerified = verifyMatrixMultiplication(matrixA, matrixB, resultArray, N, 1.0, 0.0);
-            resultReadBuffer.unmap();
-
-            return {
-                time: endTime - startTime,
-                verified: isVerified,
-                workgroupSize: workgroupSize
-            };
-        }
-
-        // Perform benchmark
-        async function performBenchmark() {
-            const iterations = parseInt(document.getElementById('iterations').value);
-            const selectedSizes = Array.from(document.querySelectorAll('#sizeCheckboxes input:checked'))
-                .map(cb => parseInt(cb.value));
-
-            const selectedNaiveWorkgroups = Array.from(document.querySelectorAll('#naiveWorkgroups input:checked'))
-                .map(cb => cb.value);
-            const selectedDecoupledWorkgroups = Array.from(document.querySelectorAll('#decoupledWorkgroups input:checked'))
-                .map(cb => cb.value);
-            const selectedVectorizedWorkgroups = Array.from(document.querySelectorAll('#vectorizedWorkgroups input:checked'))
-                .map(cb => cb.value);
-            const selectedSharedMemoryWorkgroups = Array.from(document.querySelectorAll('#sharedMemoryWorkgroups input:checked'))
-                .map(cb => cb.value);
-
-
-	    if (selectedNaiveWorkgroups.length === 0 || 
-                selectedDecoupledWorkgroups.length === 0 || 
-                selectedVectorizedWorkgroups.length === 0 ||
-                selectedSharedMemoryWorkgroups.length === 0) {
-                alert('Please select at least one workgroup size for each implementation');
-                return;
-            }
-
-            results = {
-                naive: [],
-                decoupled: [],
-		vectorized: [],
-                sharedMemory: []    
-            };
-
-            const resultsTable = document.getElementById('resultsTable');
-            resultsTable.innerHTML = `
-                <table>
+        <div class="tile">
+            <h3>Performance Summary</h3>
+            <div class="performance-summary">
+                <table id="performanceSummaryTable">
                     <thead>
                         <tr>
                             <th>Matrix Size</th>
-                            <th>Implementation</th>
-                            <th>Workgroup Size</th>
-                            <th>Average Time (ms)</th>
-                            <th>GFLOPS</th>
-                            <th>Verified</th>
+                            <th colspan="2">Best Performance</th>
+                            <th colspan="2">Second Best</th>
+                            <th colspan="2">Third Best</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
                 </table>
-            `;
-            const tbody = resultsTable.querySelector('tbody');
+            </div>
+        </div>
+    </div>
 
-            for (const size of selectedSizes) {
-                // Benchmark naive implementation with selected workgroup sizes
-                for (const workgroupSize of selectedNaiveWorkgroups) {
-                    // Warm-up run
-                    await runBenchmark(size, 'naive', workgroupSize);
+    <script>
 
-                    let totalTime = 0;
-                    let allVerified = true;
+    // Configuration
+    const matrixSizes = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
 
-                    for (let i = 0; i < iterations; i++) {
-                        const result = await runBenchmark(size, 'naive', workgroupSize);
-                        totalTime += result.time;
-                        allVerified = allVerified && result.verified;
-                    }
-
-                    const avgTime = totalTime / iterations;
-                    const gflops = (2 * size * size * size) / (avgTime * 1e6);
-
-                    results.naive.push({
-                        size,
-                        workgroupSize,
-                        time: avgTime,
-                        gflops,
-                        verified: allVerified
-                    });
-
-                    const verificationClass = allVerified ? 'verification-success' : 'verification-failed';
-                    const row = tbody.insertRow();
-                    row.innerHTML = `
-                        <td>${size}x${size}</td>
-                        <td>naive</td>
-                        <td>${workgroupSize}</td>
-                        <td>${avgTime.toFixed(2)}</td>
-                        <td>${gflops.toFixed(2)}</td>
-                        <td class="${verificationClass}">${allVerified ? '✓' : '✗'}</td>
-                    `;
-                }
-
-                // Benchmark decoupled implementation with selected workgroup sizes
-                for (const workgroupSize of selectedDecoupledWorkgroups) {
-                    // Warm-up run
-                    await runBenchmark(size, 'decoupled', workgroupSize);
-
-                    let totalTime = 0;
-                    let allVerified = true;
-
-                    for (let i = 0; i < iterations; i++) {
-                        const result = await runBenchmark(size, 'decoupled', workgroupSize);
-                        totalTime += result.time;
-                        allVerified = allVerified && result.verified;
-                    }
-
-                    const avgTime = totalTime / iterations;
-                    const gflops = (2 * size * size * size) / (avgTime * 1e6);
-
-                    results.decoupled.push({
-                        size,
-                        workgroupSize,
-                        time: avgTime,
-                        gflops,
-                        verified: allVerified
-                    });
-
-                    const verificationClass = allVerified ? 'verification-success' : 'verification-failed';
-                    const row = tbody.insertRow();
-                    row.innerHTML = `
-                        <td>${size}x${size}</td>
-                        <td>decoupled</td>
-                        <td>${workgroupSize}</td>
-                        <td>${avgTime.toFixed(2)}</td>
-                        <td>${gflops.toFixed(2)}</td>
-                        <td class="${verificationClass}">${allVerified ? '✓' : '✗'}</td>
-                    `;
-                }
-
-                // Benchmark vectorized implementation with selected workgroup sizes
-                for (const workgroupSize of selectedVectorizedWorkgroups) {
-                    // Warm-up run
-                    await runBenchmark(size, 'vectorized', workgroupSize);
-                    
-                    let totalTime = 0;
-                    let allVerified = true;
-                    
-                    for (let i = 0; i < iterations; i++) {
-                        const result = await runBenchmark(size, 'vectorized', workgroupSize);
-                        totalTime += result.time;
-                        allVerified = allVerified && result.verified;
-                    }
-                    
-                    const avgTime = totalTime / iterations;
-                    const gflops = (2 * size * size * size) / (avgTime * 1e6);
-                    
-                    results.vectorized.push({
-                        size,
-                        workgroupSize,
-                        time: avgTime,
-                        gflops,
-                        verified: allVerified
-                    });
-                    
-                    const verificationClass = allVerified ? 'verification-success' : 'verification-failed';
-                    const row = tbody.insertRow();
-                    row.innerHTML = `
-                        <td>${size}x${size}</td>
-                        <td>vectorized</td>
-                        <td>${workgroupSize}</td>
-                        <td>${avgTime.toFixed(2)}</td>
-                        <td>${gflops.toFixed(2)}</td>
-                        <td class="${verificationClass}">${allVerified ? '✓' : '✗'}</td>
-                    `;
-                }
-
-                    for (const workgroupSize of selectedSharedMemoryWorkgroups) {
-                        // Warm-up run
-                        await runBenchmark(size, 'sharedMemory', workgroupSize);
-
-                        let totalTime = 0;
-                        let allVerified = true;
-
-                        for (let i = 0; i < iterations; i++) {
-                            const result = await runBenchmark(size, 'sharedMemory', workgroupSize);
-                            totalTime += result.time;
-                            allVerified = allVerified && result.verified;
-                        }
-
-                        const avgTime = totalTime / iterations;
-                        const gflops = (2 * size * size * size) / (avgTime * 1e6);
-
-                        results.sharedMemory.push({
-                            size,
-                            workgroupSize,
-                            time: avgTime,
-                            gflops,
-                            verified: allVerified
-                        });
-
-                        const verificationClass = allVerified ? 'verification-success' : 'verification-failed';
-                        const row = tbody.insertRow();
-                        row.innerHTML = `
-                            <td>${size}x${size}</td>
-                            <td>shared memory</td>
-                            <td>${workgroupSize}</td>
-                            <td>${avgTime.toFixed(2)}</td>
-                            <td>${gflops.toFixed(2)}</td>
-                            <td class="${verificationClass}">${allVerified ? '✓' : '✗'}</td>
-                        `;
-                    }
-                }
-
-            updateChart();
-
-            // Update the performance tables
-            const root = document.getElementById('topPerformersRoot');
-            const reactRoot = ReactDOM.createRoot(root);
-            reactRoot.render(React.createElement(TopPerformersTable));
+    // Generate workgroup sizes based on the specified logic
+    const workgroupSizes = [];
+    for (let x = 0; x <= 8; x++) {
+        for (let y = 0; y <= 8; y++) {
+            const xDim = Math.pow(2, x);
+            const yDim = Math.pow(2, y);
+            if (xDim * yDim <= 256) {
+                workgroupSizes.push(`${xDim},${yDim}`);
+            }
         }
+    }
 
-        // Update chart
-        function updateChart() {
-            const ctx = document.getElementById('benchmarkChart').getContext('2d');
+    let device;
+    let generatedMatrices = {};
+    let benchmarkChart;
+    let results = {
+        naiveDecoupled: [],
+        sharedMemory: [],
+        vectorized: [],
+	coarsened: [],
+	oneDTiling: []
+    };
 
-            if (benchmarkChart) {
-                benchmarkChart.destroy();
+    // Generate tile sizes for a given workgroup size
+    function generateTileSizes(workgroupSize) {
+        const [wx, wy] = workgroupSize.split(',').map(Number);
+        const tileSizes = new Set();
+        
+        // Get maximum allowed power of 2 for each dimension
+        const maxPowerX = Math.floor(Math.log2(wx));
+        const maxPowerY = Math.floor(Math.log2(wy));
+        
+        // Generate all possible rectangular combinations
+        for (let px = 0; px <= maxPowerX; px++) {
+            for (let py = 0; py <= maxPowerY; py++) {
+                const tileX = Math.pow(2, px);
+                const tileY = Math.pow(2, py);
+                
+                // Add the rectangular tile size
+                tileSizes.add(`${tileX},${tileY}`);
+            }
+        }
+        
+        return Array.from(tileSizes);
+    }
+
+    const coarseningSizes = [];
+    for (let x = 0; x <= 4; x++) {
+        for (let y = 0; y <= 4; y++) {
+            const xDim = Math.pow(2, x);
+            const yDim = Math.pow(2, y);
+            coarseningSizes.push(`${xDim},${yDim}`);
+        }
+    }
+
+    const tileMultiplierSizes = [];
+    for (let x = 0; x <= 4; x++) { 
+        tileMultiplierSizes.push(Math.pow(2, x));
+    }
+
+    // Update validation function for tile size compatibility
+    function isTileSizeCompatibleWithWorkgroup(tileSize, workgroupSize) {
+        const [tileWidth, tileHeight] = tileSize.split(',').map(Number);
+        const [workgroupWidth, workgroupHeight] = workgroupSize.split(',').map(Number);
+        
+        // Each tile dimension must fit within its corresponding workgroup dimension
+        return tileWidth <= workgroupWidth && tileHeight <= workgroupHeight;
+    }
+
+    // Update tile size options based on selected workgroup
+    function updateTileSizes() {
+        const selectedWorkgroups = Array.from(document.querySelectorAll('#workgroupSizes input:checked'))
+            .map(cb => cb.value);
+
+        const tileSizesContainer = document.getElementById('tileSizes');
+        const allTileSizes = new Set();
+
+        selectedWorkgroups.forEach(workgroupSize => {
+            generateTileSizes(workgroupSize).forEach(size => allTileSizes.add(size));
+        });
+
+        tileSizesContainer.innerHTML = Array.from(allTileSizes).sort((a, b) => {
+            const [aSize] = a.split(',').map(Number);
+            const [bSize] = b.split(',').map(Number);
+            return aSize - bSize;
+        }).map(size => `
+            <label>
+                <input type="checkbox" value="${size}" ${size === '16,16' ? 'checked' : ''}>
+                ${size.replace(',', 'x')}
+            </label>
+        `).join('');
+    }
+
+    function handleKernels(action) {
+        const checkboxes = document.querySelectorAll('.implementation-selector input[type="checkbox"]');
+        checkboxes.forEach(checkbox => {
+            if (action === 'selectAll') {
+                checkbox.checked = true;
+            } else if (action === 'reset') {
+                // Set default state
+                checkbox.checked = [].includes(checkbox.id);
+            }
+        });
+    }
+
+    function getNaiveWGSL(workgroupSize) {
+        const [wx, wy] = workgroupSize.split(',').map(Number);
+        return `
+            @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+            @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+            @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+            @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+    
+            struct Uniforms {
+                N : u32,
+                alpha : f32,
+                beta : f32,
+            }
+    
+            @compute @workgroup_size(${wx}, ${wy})
+            fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
+                let N = uniforms.N;
+                let row = global_id.y;
+                let col = global_id.x;
+    
+                if (row >= N || col >= N) {
+                    return;
+                }
+    
+                var sum: f32 = 0.0;
+                for (var k = 0u; k < N; k = k + 1u) {
+                    sum = sum + matrixA[row * N + k] * matrixB[k * N + col];
+                }
+    
+                matrixC[row * N + col] = uniforms.alpha * sum + uniforms.beta * matrixC[row * N + col];
+            }
+        `;
+    }
+
+    // DecoupledNaive WGSL implementation
+    function getNaiveDecoupledWGSL(workgroupSize) {
+        const [wx, wy] = workgroupSize.split(',').map(Number);
+        return `
+            @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+            @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+            @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+            @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+
+            struct Uniforms {
+                N : u32,
+                alpha : f32,
+                beta : f32,
             }
 
-            const datasets = [];
-            const colors = [
-                'rgb(75, 192, 192)', 'rgb(255, 99, 132)', 'rgb(54, 162, 235)',
-                'rgb(255, 206, 86)', 'rgb(153, 102, 255)', 'rgb(255, 159, 64)',
-                'rgb(75, 192, 100)', 'rgb(255, 99, 71)', 'rgb(54, 162, 200)',
-                'rgb(128, 0, 0)', 'rgb(0, 128, 0)', 'rgb(0, 0, 128)',
-                'rgb(128, 128, 0)', 'rgb(128, 0, 128)', 'rgb(0, 128, 128)'
-            ];
+            @compute @workgroup_size(${wx}, ${wy})
+            fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
+                let N = uniforms.N;
+                let row = global_id.y;
+                let col = global_id.x;
 
-            let colorIndex = 0;
-            ['naive', 'decoupled', 'vectorized', 'sharedMemory'].forEach(impl => {
-                const workgroupSizes = [...new Set(results[impl].map(r => r.workgroupSize))];
-                workgroupSizes.forEach(wg => {
-                    const filteredResults = results[impl].filter(r => r.workgroupSize === wg);
-                    datasets.push({
-                        label: `${impl} (${wg.replace(',', 'x')})`,
-                        data: filteredResults.map(r => r.time),
-                        borderColor: colors[colorIndex % colors.length],
-                        tension: 0.1
+                if (row >= N || col >= N) {
+                    return;
+                }
+
+                let row_offset = row * N;
+                var sum: f32 = 0.0;
+
+                for (var k = 0u; k < N; k = k + 1u) {
+                    let a = matrixA[row_offset + k];
+                    let b = matrixB[k * N + col];
+                    sum = sum + a * b;
+                }
+
+                matrixC[row_offset + col] = uniforms.alpha * sum + uniforms.beta * matrixC[row_offset + col];
+            }
+        `;
+    }
+
+    // Shared Memory Tiling WGSL implementation
+    function getNaiveDecoupledSharedMemoryWGSL(workgroupSize, tileSize) {
+        const [THREADS_X, THREADS_Y] = workgroupSize.split(',').map(Number);
+        const [TUNE_SPLIT, _] = tileSize.split(',').map(Number);
+        
+        return `
+            @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+            @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+            @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+            @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+    
+            struct Uniforms {
+                N : u32,
+                alpha : f32,
+                beta : f32,
+            }
+    
+            const THREADS_X = ${THREADS_X}u;
+            const THREADS_Y = ${THREADS_Y}u;
+            const TUNE_SPLIT = ${TUNE_SPLIT}u;
+    
+            fn index2D(row: u32, col: u32, stride: u32) -> u32 {
+                return row * stride + col;
+            }
+    
+            var<workgroup> A_shared: array<f32, ${THREADS_Y * TUNE_SPLIT}>;
+            var<workgroup> B_shared: array<f32, ${TUNE_SPLIT * THREADS_X}>;
+    
+            @compute @workgroup_size(${THREADS_X}, ${THREADS_Y})
+            fn main(
+                @builtin(global_invocation_id) global_id: vec3<u32>,
+                @builtin(local_invocation_id) local_id: vec3<u32>,
+                @builtin(workgroup_id) workgroup_id: vec3<u32>
+            ) {
+                let N = uniforms.N;
+                let i = global_id.y;
+                let j = global_id.x;
+                let local_i = local_id.y;
+                let local_j = local_id.x;
+                
+                var value: f32 = 0.0;
+                
+                for (var outer_k: u32 = 0u; outer_k < N; outer_k += TUNE_SPLIT) {
+                    // Cache data from global memory to shared memory for A
+                    for (var local_j_stride = local_j; 
+                         local_j_stride < TUNE_SPLIT; 
+                         local_j_stride += THREADS_X) {
+                        let shared_idx = index2D(local_i, local_j_stride, TUNE_SPLIT);
+                        let global_idx = index2D(i, outer_k + local_j_stride, N);
+                        
+                        var data_a = 0.0;
+                        if (i < N && (outer_k + local_j_stride) < N) {
+                            data_a = matrixA[global_idx];
+                        }
+                        A_shared[shared_idx] = data_a;
+                    }
+                    
+                    // Cache data from global memory to shared memory for B
+                    for (var local_i_stride = local_i; 
+                         local_i_stride < TUNE_SPLIT; 
+                         local_i_stride += THREADS_Y) {
+                        let shared_idx = index2D(local_i_stride, local_j, THREADS_X);
+                        let global_idx = index2D(outer_k + local_i_stride, j, N);
+                        
+                        var data_b = 0.0;
+                        if ((outer_k + local_i_stride) < N && j < N) {
+                            data_b = matrixB[global_idx];
+                        }
+                        B_shared[shared_idx] = data_b;
+                    }
+                    
+                    // Synchronize all threads in the workgroup
+                    workgroupBarrier();
+                    
+                    // Compute partial results using shared memory
+                    if (i < N && j < N) {
+                        for (var inner_k: u32 = 0u; inner_k < TUNE_SPLIT; inner_k = inner_k + 1u) {
+                            if (outer_k + inner_k < N) {
+                                let a_idx = index2D(local_i, inner_k, TUNE_SPLIT);
+                                let b_idx = index2D(inner_k, local_j, THREADS_X);
+                                value = value + A_shared[a_idx] * B_shared[b_idx];
+                            }
+                        }
+                    }
+                    
+                    // Synchronize before next iteration
+                    workgroupBarrier();
+                }
+                
+                // Write final result
+                if (i < N && j < N) {
+                    let result_idx = index2D(i, j, N);
+                    matrixC[result_idx] = uniforms.alpha * value + uniforms.beta * matrixC[result_idx];
+                }
+            }
+        `;
+    }
+
+    // Vectorized Shared Memory WGSL implementation
+    function getVectorizedSharedMemoryWGSL(workgroupSize, tileSize) {
+        const [THREADS_X, THREADS_Y] = workgroupSize.split(',').map(Number);
+        const [TUNE_SPLIT, _] = tileSize.split(',').map(Number);
+        
+        // Ensure TILE_SIZE >= 4
+        if (TUNE_SPLIT < 4) {
+            throw new Error("TILE_SIZE must be >= 4 for vectorization");
+        }
+    
+        return `
+            @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+            @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+            @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+            @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+            
+            struct Uniforms {
+                N : u32,
+                alpha : f32,
+                beta : f32,
+            }
+            
+            const THREADS_X = ${THREADS_X}u;
+            const THREADS_Y = ${THREADS_Y}u;
+            const TUNE_SPLIT = ${TUNE_SPLIT}u;
+            const VEC_SIZE = 4u;  // Using vec4 for vectorization
+            
+            fn index2D(row: u32, col: u32, stride: u32) -> u32 {
+                return row * stride + col;
+            }
+            
+            var<workgroup> A_shared: array<f32, ${THREADS_Y * TUNE_SPLIT}>;
+            var<workgroup> B_shared: array<f32, ${TUNE_SPLIT * THREADS_X}>;
+            
+            @compute @workgroup_size(${THREADS_X}, ${THREADS_Y})
+            fn main(
+                @builtin(global_invocation_id) global_id: vec3<u32>,
+                @builtin(local_invocation_id) local_id: vec3<u32>,
+                @builtin(workgroup_id) workgroup_id: vec3<u32>
+            ) {
+                let N = uniforms.N;
+                let i = global_id.y;
+                let j = global_id.x;
+                let local_i = local_id.y;
+                let local_j = local_id.x;
+                
+                var acc_value = 0.0;
+                
+                for (var outer_k: u32 = 0u; outer_k < N; outer_k += TUNE_SPLIT) {
+                    // Cache data from global memory to shared memory for A
+                    for (var local_j_stride = local_j; local_j_stride < TUNE_SPLIT; local_j_stride += THREADS_X) {
+                        let shared_idx = index2D(local_i, local_j_stride, TUNE_SPLIT);
+                        let global_idx = index2D(i, outer_k + local_j_stride, N);
+                        
+                        var data_a = 0.0;
+                        if (i < N && (outer_k + local_j_stride) < N) {
+                            data_a = matrixA[global_idx];
+                        }
+                        A_shared[shared_idx] = data_a;
+                    }
+                    
+                    // Cache data from global memory to shared memory for B
+                    for (var local_i_stride = local_i; local_i_stride < TUNE_SPLIT; local_i_stride += THREADS_Y) {
+                        let shared_idx = index2D(local_i_stride, local_j, THREADS_X);
+                        let global_idx = index2D(outer_k + local_i_stride, j, N);
+                        
+                        var data_b = 0.0;
+                        if ((outer_k + local_i_stride) < N && j < N) {
+                            data_b = matrixB[global_idx];
+                        }
+                        B_shared[shared_idx] = data_b;
+                    }
+                    
+                    workgroupBarrier();
+                    
+                    // Vectorized computation using dot product
+                    if (i < N && j < N) {
+                        for (var inner_k: u32 = 0u; inner_k < TUNE_SPLIT; inner_k += VEC_SIZE) {
+                            if (outer_k + inner_k + 3u < N) {
+                                let a_idx = index2D(local_i, inner_k, TUNE_SPLIT);
+                                let b_idx = index2D(inner_k, local_j, THREADS_X);
+                                
+                                let a_vec = vec4<f32>(
+                                    A_shared[a_idx],
+                                    A_shared[a_idx + 1u],
+                                    A_shared[a_idx + 2u],
+                                    A_shared[a_idx + 3u]
+                                );
+                                
+                                let b_vec = vec4<f32>(
+                                    B_shared[b_idx],
+                                    B_shared[b_idx + THREADS_X],
+                                    B_shared[b_idx + 2u * THREADS_X],
+                                    B_shared[b_idx + 3u * THREADS_X]
+                                );
+                                
+                                // Use dot product instead of manual multiplication and addition
+                                acc_value = acc_value + dot(a_vec, b_vec);
+                            }
+                        }
+                    }
+                    
+                    workgroupBarrier();
+                }
+                
+                // Write final result
+                if (i < N && j < N) {
+                    let result_idx = index2D(i, j, N);
+                    matrixC[result_idx] = uniforms.alpha * acc_value + uniforms.beta * matrixC[result_idx];
+                }
+            }
+    `;}
+
+    function getCoarsenedSharedMemoryWGSL(workgroupSize, tileSize, coarsenX, coarsenY) {
+        const [THREADS_X, THREADS_Y] = workgroupSize.split(',').map(Number);
+        const [TUNE_SPLIT, _] = tileSize.split(',').map(Number);
+        
+        return `
+            @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+            @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+            @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+            @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+    
+            struct Uniforms {
+                N : u32,
+                alpha : f32,
+                beta : f32,
+            }
+    
+            const THREADS_X = ${THREADS_X}u;
+            const THREADS_Y = ${THREADS_Y}u;
+            const TUNE_SPLIT = ${TUNE_SPLIT}u;
+            const COARSEN_X = ${coarsenX}u;
+            const COARSEN_Y = ${coarsenY}u;
+    
+            fn index2D(row: u32, col: u32, stride: u32) -> u32 {
+                return row * stride + col;
+            }
+    
+            var<workgroup> A_shared: array<f32, ${THREADS_Y * TUNE_SPLIT * coarsenY}>;
+            var<workgroup> B_shared: array<f32, ${TUNE_SPLIT * THREADS_X * coarsenX}>;
+    
+            @compute @workgroup_size(${THREADS_X}, ${THREADS_Y})
+            fn main(
+                @builtin(global_invocation_id) global_id: vec3<u32>,
+                @builtin(local_invocation_id) local_id: vec3<u32>,
+                @builtin(workgroup_id) workgroup_id: vec3<u32>
+            ) {
+                let N = uniforms.N;
+                
+                // Calculate base indices for the block of elements this thread will compute
+                let base_global_row = workgroup_id.y * (THREADS_Y * COARSEN_Y) + local_id.y;
+                let base_global_col = workgroup_id.x * (THREADS_X * COARSEN_X) + local_id.x;
+    
+                // Initialize accumulators
+                var acc: array<array<f32, ${coarsenX}>, ${coarsenY}>;
+                for (var cy = 0u; cy < COARSEN_Y; cy = cy + 1u) {
+                    for (var cx = 0u; cx < COARSEN_X; cx = cx + 1u) {
+                        acc[cy][cx] = 0.0;
+                    }
+                }
+    
+                // Process tiles
+                for (var tile_idx = 0u; tile_idx < N; tile_idx += TUNE_SPLIT) {
+                    // Load A tiles into shared memory
+                    for (var cy = 0u; cy < COARSEN_Y; cy = cy + 1u) {
+                        let row = base_global_row + cy * THREADS_Y;
+                        if (row < N) {
+                            for (var k = local_id.x; k < TUNE_SPLIT; k += THREADS_X) {
+                                let global_idx = index2D(row, tile_idx + k, N);
+                                let shared_idx = index2D(local_id.y + cy * THREADS_Y, k, TUNE_SPLIT);
+                                A_shared[shared_idx] = select(0.0, matrixA[global_idx], tile_idx + k < N);
+                            }
+                        }
+                    }
+    
+                    // Load B tiles into shared memory
+                    for (var cx = 0u; cx < COARSEN_X; cx = cx + 1u) {
+                        let col = base_global_col + cx * THREADS_X;
+                        if (col < N) {
+                            for (var k = local_id.y; k < TUNE_SPLIT; k += THREADS_Y) {
+                                let global_idx = index2D(tile_idx + k, col, N);
+                                let shared_idx = index2D(k, local_id.x + cx * THREADS_X, THREADS_X * COARSEN_X);
+                                B_shared[shared_idx] = select(0.0, matrixB[global_idx], tile_idx + k < N);
+                            }
+                        }
+                    }
+    
+                    workgroupBarrier();
+    
+                    // Compute partial results
+                    for (var k = 0u; k < TUNE_SPLIT; k = k + 1u) {
+                        for (var cy = 0u; cy < COARSEN_Y; cy = cy + 1u) {
+                            let row = base_global_row + cy * THREADS_Y;
+                            if (row >= N) { continue; }
+                            
+                            let a_val = A_shared[index2D(local_id.y + cy * THREADS_Y, k, TUNE_SPLIT)];
+                            
+                            for (var cx = 0u; cx < COARSEN_X; cx = cx + 1u) {
+                                let col = base_global_col + cx * THREADS_X;
+                                if (col >= N) { continue; }
+                                
+                                let b_val = B_shared[index2D(k, local_id.x + cx * THREADS_X, THREADS_X * COARSEN_X)];
+                                acc[cy][cx] = acc[cy][cx] + a_val * b_val;
+                            }
+                        }
+                    }
+    
+                    workgroupBarrier();
+                }
+    
+                // Write results
+                for (var cy = 0u; cy < COARSEN_Y; cy = cy + 1u) {
+                    let row = base_global_row + cy * THREADS_Y;
+                    if (row >= N) { continue; }
+    
+                    for (var cx = 0u; cx < COARSEN_X; cx = cx + 1u) {
+                        let col = base_global_col + cx * THREADS_X;
+                        if (col >= N) { continue; }
+    
+                        let idx = index2D(row, col, N);
+                        matrixC[idx] = uniforms.alpha * acc[cy][cx] + uniforms.beta * matrixC[idx];
+                    }
+                }
+            }
+        `;
+    }
+
+function get1DSharedMemoryTilingWGSL(workgroupSize, tilingMultiplier) {
+    const singleDimSize = parseInt(workgroupSize.split(',')[0]);
+
+    return `
+        struct Uniforms {
+            N : u32,          // Size of the NxN matrix
+            alpha : f32,      // Scaling factor for product
+            beta : f32        // Scaling factor for existing values in matrixC
+        };
+
+        @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+        @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+        @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+        @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+
+        const TILE_DIM = ${singleDimSize}u; // Workgroup size (e.g., 16, 32)
+        const TILE_M = ${tilingMultiplier}u; // Number of rows computed by each thread
+
+        var<workgroup> sharedA: array<f32, TILE_M * TILE_DIM>;
+        var<workgroup> sharedB: array<f32, TILE_DIM * TILE_DIM>;
+
+        @compute @workgroup_size(TILE_DIM)
+        fn main(
+            @builtin(global_invocation_id) global_id: vec3<u32>,
+            @builtin(local_invocation_id) local_id: vec3<u32>,
+            @builtin(workgroup_id) workgroup_id: vec3<u32>
+        ) {
+            let N = uniforms.N;
+            let tidx = local_id.x;
+            let bidx = workgroup_id.x;
+
+            // Each thread computes TILE_M results
+            var acc: array<f32, TILE_M>;
+            for (var i = 0u; i < TILE_M; i = i + 1u) {
+                acc[i] = 0.0;
+            }
+
+            let num_tiles = (N + TILE_DIM - 1u) / TILE_DIM;
+            let row_base = bidx * TILE_DIM * TILE_M + tidx;
+
+            // Loop over tiles of the input matrices
+            for (var tile = 0u; tile < num_tiles; tile = tile + 1u) {
+                // Load TILE_M rows from matrixA into shared memory
+                for (var m = 0u; m < TILE_M; m = m + 1u) {
+                    let row = row_base + m * TILE_DIM;
+                    let tile_offset = tile * TILE_DIM;
+
+                    for (var k = 0u; k < TILE_DIM; k = k + 1u) {
+                        let src_idx = row * N + tile_offset + k;
+                        let dst_idx = m * TILE_DIM + k;
+
+                        if (row < N && (tile_offset + k) < N) {
+                            sharedA[dst_idx] = matrixA[src_idx];
+                        } else {
+                            sharedA[dst_idx] = 0.0; // Zero-padding for out-of-bound elements
+                        }
+                    }
+                }
+
+                // Load one tile of matrixB into shared memory
+                let tile_offset = tile * TILE_DIM;
+                for (var k = 0u; k < TILE_DIM; k = k + 1u) {
+                    let src_idx = (tile_offset + k) * N + tidx;
+                    let dst_idx = k * TILE_DIM + tidx;
+
+                    if ((tile_offset + k) < N && tidx < N) {
+                        sharedB[dst_idx] = matrixB[src_idx];
+                    } else {
+                        sharedB[dst_idx] = 0.0; // Zero-padding for out-of-bound elements
+                    }
+                }
+
+                workgroupBarrier(); // Synchronize all threads within the workgroup
+
+                // Compute partial products
+                for (var k = 0u; k < TILE_DIM; k = k + 1u) {
+                    let bval = sharedB[k * TILE_DIM + tidx];
+
+                    for (var m = 0u; m < TILE_M; m = m + 1u) {
+                        let aval = sharedA[m * TILE_DIM + k];
+                        acc[m] = acc[m] + aval * bval;
+                    }
+                }
+
+                workgroupBarrier(); // Synchronize before next tile loading
+            }
+
+            // Write back results
+            for (var m = 0u; m < TILE_M; m = m + 1u) {
+                let row = row_base + m * TILE_DIM;
+                if (row < N && tidx < N) {
+                    let idx = row * N + tidx;
+                    matrixC[idx] = uniforms.alpha * acc[m] + uniforms.beta * matrixC[idx];
+                }
+            }
+        }
+    `;
+}
+
+    // Initialize WebGPU
+    async function initWebGPU() {
+        if (!navigator.gpu) {
+            throw new Error("WebGPU not supported");
+        }
+        const adapter = await navigator.gpu.requestAdapter();
+        device = await adapter.requestDevice();
+        return device;
+    }
+			    
+    // Create buffer helper function
+    function createBuffer(data, usage) {
+        const buffer = device.createBuffer({
+            size: data.byteLength,
+            usage: usage,
+            mappedAtCreation: true,
+        });
+        new Float32Array(buffer.getMappedRange()).set(data);
+        buffer.unmap();
+        return buffer;
+    }
+
+    function updateChart() {
+        const ctx = document.getElementById('benchmarkChart').getContext('2d');
+    
+        if (benchmarkChart) {
+            benchmarkChart.destroy();
+        }
+    
+        const colors = [
+            'rgb(54, 162, 235)',  // blue
+            'rgb(75, 192, 192)',  // teal
+            'rgb(153, 102, 255)', // purple
+            'rgb(255, 159, 64)',  // orange
+            'rgb(255, 99, 132)'   // red
+        ];
+    
+        function formatConfigForLegend(result) {
+            let config = `${result.implementation} (${result.workgroupSize.replace(',', 'x')})`;
+            if (result.implementation === '1D Tiling') {
+                if (result.tilingMultiplier) {
+                    config += ` TM${result.tilingMultiplier}x`;
+                }
+            } else {
+                if (result.tileSize && result.tileSize !== 'N/A') {
+                    config += ` T${result.tileSize.replace(',', 'x')}`;
+                }
+                if (result.coarsenX && result.coarsenY) {
+                    config += ` C${result.coarsenX}x${result.coarsenY}`;
+                }
+            }
+            return config;
+        }
+    
+        // Get all matrix sizes
+        const matrixSizes = [...new Set([
+            ...results.naiveDecoupled.map(r => r.size),
+            ...results.sharedMemory.map(r => r.size),
+            ...results.vectorized.map(r => r.size),
+            ...results.coarsened.map(r => r.size),
+            ...results.oneDTiling.map(r => r.size)
+        ])].sort((a, b) => a - b);
+    
+        // Track top configurations and their performance
+        const trackedConfigs = new Map();
+    
+        // For each size, identify and track the top 3 configurations
+        matrixSizes.forEach(size => {
+            const sizeResults = [
+                ...results.naiveDecoupled.filter(r => r.verified && r.size === size),
+                ...results.sharedMemory.filter(r => r.verified && r.size === size),
+                ...results.vectorized.filter(r => r.verified && r.size === size),
+                ...results.coarsened.filter(r => r.verified && r.size === size),
+                ...results.oneDTiling.filter(r => r.verified && r.size === size)
+            ].sort((a, b) => a.time - b.time);
+    
+            // Take top 3 for this size
+            const top3 = sizeResults.slice(0, 3);
+            
+            top3.forEach(result => {
+                const configKey = formatConfigForLegend(result);
+                if (!trackedConfigs.has(configKey)) {
+                    trackedConfigs.set(configKey, {
+                        label: configKey,
+                        data: [],
+                        firstSeenAtSize: size,
+                        implementation: result.implementation,
+                        workgroupSize: result.workgroupSize,
+                        tileSize: result.tileSize,
+                        coarsenX: result.coarsenX,
+                        coarsenY: result.coarsenY,
+                        tilingMultiplier: result.tilingMultiplier
                     });
-                    colorIndex++;
-                });
+                }
             });
+        });
+    
+        // Now collect all performance data for tracked configurations
+        trackedConfigs.forEach((config, configKey) => {
+            matrixSizes.forEach(size => {
+                // Only collect data for sizes >= when config first appeared as top 3
+                if (size >= config.firstSeenAtSize) {
+                    let result;
+                    switch (config.implementation) {
+                        case 'Naive':
+                            result = results.naive.find(r => 
+                                r.verified && 
+                                r.size === size && 
+                                r.workgroupSize === config.workgroupSize
+                            );
+                            break;
+                        case 'DecoupledNaive':
+                            result = results.naiveDecoupled.find(r => 
+                                r.verified && 
+                                r.size === size && 
+                                r.workgroupSize === config.workgroupSize
+                            );
+                            break;
+                        case 'Shared Memory':
+                            result = results.sharedMemory.find(r => 
+                                r.verified && 
+                                r.size === size && 
+                                r.workgroupSize === config.workgroupSize && 
+                                r.tileSize === config.tileSize
+                            );
+                            break;
+                        case 'Vectorized':
+                            result = results.vectorized.find(r => 
+                                r.verified && 
+                                r.size === size && 
+                                r.workgroupSize === config.workgroupSize && 
+                                r.tileSize === config.tileSize
+                            );
+                            break;
+                        case 'Coarsened':
+                            result = results.coarsened.find(r => 
+                                r.verified && 
+                                r.size === size && 
+                                r.workgroupSize === config.workgroupSize && 
+                                r.tileSize === config.tileSize &&
+                                r.coarsenX === config.coarsenX &&
+                                r.coarsenY === config.coarsenY
+                            );
+                            break;
+                        case '1D Tiling':
+                            result = results.oneDTiling.find(r => 
+                                r.verified && 
+                                r.size === size && 
+                                r.workgroupSize === config.workgroupSize && 
+                                r.tilingMultiplier === config.tilingMultiplier
+                            );
+                            break;
+                    }
+                    if (result) {
+                        config.data.push({
+                            x: size,
+                            y: result.time
+                        });
+                    }
+                }
+            });
+        });
+    
+        // Create datasets from tracked configurations
+        const datasets = Array.from(trackedConfigs.values())
+            .map((config, index) => ({
+                label: config.label,
+                data: config.data,
+                borderColor: colors[index % colors.length],
+                backgroundColor: colors[index % colors.length].replace('rgb', 'rgba').replace(')', ', 0.1)'),
+                tension: 0.1,
+                fill: false
+            }))
+            .sort((a, b) => {
+                // Sort by performance at last measured point
+                const aLastValue = a.data[a.data.length - 1]?.y || Infinity;
+                const bLastValue = b.data[b.data.length - 1]?.y || Infinity;
+                return aLastValue - bLastValue;
+            });
+    
+        benchmarkChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: matrixSizes.map(size => `${size}x${size}`),
+                datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {
+                        type: 'category',
+                        position: 'bottom',
+                        title: {
+                            display: true,
+                            text: 'Matrix Size',
+                            padding: 10
+                        },
+                        ticks: {
+                            autoSkip: false
+                        }
+                    },
+                    y: {
+                        type: 'logarithmic',
+                        title: {
+                            display: true,
+                            text: 'Time (ms)',
+                            padding: 10
+                        }
+                    }
+                },
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Top Performing Kernel Configurations',
+                        padding: {
+                            top: 10,
+                            bottom: 20
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return `${context.dataset.label}: ${context.parsed.y.toFixed(2)} ms`;
+                            }
+                        }
+                    },
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            boxWidth: 12,
+                            padding: 15,
+                            font: {
+                                size: 11
+                            }
+                        }
+                    }
+                },
+                layout: {
+                    padding: {
+                        top: 10,
+                        right: 20,
+                        bottom: 20,
+                        left: 10
+                    }
+                }
+            }
+        });
+    }
 
-            benchmarkChart = new Chart(ctx, {
-                type: 'line',
+    function createBarCharts() {
+        const barChartsContainer = document.getElementById('barChartsContainer');
+        barChartsContainer.innerHTML = '';
+    
+        const verifiedResults = [
+	    ...results.naive.filter(r => r.verified),
+            ...results.naiveDecoupled.filter(r => r.verified),
+            ...results.sharedMemory.filter(r => r.verified),
+            ...results.vectorized.filter(r => r.verified),
+            ...results.coarsened.filter(r => r.verified),
+            ...results.oneDTiling.filter(r => r.verified)
+        ];
+    
+        const getImplementationColor = (implementation, alpha = 0.8) => {
+            const colors = {
+		'Naive': `rgba(255, 182, 193, ${alpha})`, 
+                'DecoupledNaive': `rgba(144, 238, 144, ${alpha})`,
+                'Shared Memory': `rgba(54, 162, 235, ${alpha})`,
+                'Vectorized': `rgba(75, 192, 192, ${alpha})`,
+                'Coarsened': `rgba(153, 102, 255, ${alpha})`,
+                '1D Tiling': `rgba(255, 159, 64, ${alpha})`
+            };
+            return colors[implementation] || `rgba(201, 203, 207, ${alpha})`;
+        };
+    
+        const matrixSizes = [...new Set(verifiedResults.map(r => r.size))]
+            .sort((a, b) => a - b);
+    
+        matrixSizes.forEach(size => {
+            const sizeResults = verifiedResults
+                .filter(r => r.size === size)
+                .sort((a, b) => a.time - b.time);
+    
+            if (sizeResults.length === 0) return;
+    
+            const chartWrapper = document.createElement('div');
+            chartWrapper.className = 'bar-chart-wrapper';
+            const canvas = document.createElement('canvas');
+            chartWrapper.appendChild(canvas);
+            barChartsContainer.appendChild(chartWrapper);
+    
+            const maxTime = Math.max(...sizeResults.map(r => r.time));
+            const yAxisMax = Math.ceil(maxTime * 1.1);
+    
+            const getConfigLabel = (result) => {
+                const implementation = result.implementation;
+                const workgroupSize = result.workgroupSize.replace(',', 'x');
+                let configDetails = '';
+    
+                if (result.tileSize && result.tileSize !== 'N/A') {
+                    configDetails += ` Tile(${result.tileSize.replace(',', 'x')})`;
+                }
+                if (result.coarsenX && result.coarsenY) {
+                    configDetails += ` Coarse(${result.coarsenX}x${result.coarsenY})`;
+                }
+                if (result.tilingMultiplier) {
+                    configDetails += ` TM(${result.tilingMultiplier}x)`;
+                }
+                
+                return `${implementation} ${workgroupSize}${configDetails}`;
+            };
+    
+            new Chart(canvas, {
+                type: 'bar',
                 data: {
-                    labels: [...new Set(results.naive.map(r => `${r.size}x${r.size}`))],
-                    datasets: datasets
+                    labels: sizeResults.map(r => getConfigLabel(r)),
+                    datasets: [{
+                        label: 'Execution Time',
+                        data: sizeResults.map(r => r.time),
+                        backgroundColor: sizeResults.map(r => getImplementationColor(r.implementation, 0.8)),
+                        borderColor: sizeResults.map(r => getImplementationColor(r.implementation, 1)),
+                        borderWidth: 1
+                    }]
                 },
                 options: {
                     responsive: true,
-                    scales: {
-                        x: {
-                            title: {
-                                display: true,
-                                text: 'Matrix Size'
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: `Performance for ${size}x${size} Matrix`,
+                            font: {
+                                size: 16,
+                                weight: 'bold'
                             }
                         },
+                        subtitle: {
+                            display: true,
+                            text: 'Lower time is better',
+                            padding: 10
+                        },
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const result = sizeResults[context.dataIndex];
+                                    let label = `Time: ${context.raw.toFixed(2)} ms`;
+                                    if (result.gflops) {
+                                        label += `\nGFLOPS: ${result.gflops.toFixed(2)}`;
+                                    }
+                                    return label;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
                         y: {
-                            type: 'logarithmic',
+                            beginAtZero: true,
+                            max: yAxisMax,
                             title: {
                                 display: true,
                                 text: 'Time (ms)'
                             }
-                        }
-                    },
-                    plugins: {
-                        title: {
-                            display: true,
-                            text: 'Matrix Multiplication Performance Comparison'
+                        },
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Method & Configuration'
+                            },
+                            ticks: {
+                                maxRotation: 45,
+                                minRotation: 45
+                            }
                         }
                     }
                 }
             });
+        });
+    }
+
+    function updatePerformanceSummary() {
+        const matrixSizes = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
+        const tbody = document.querySelector('#performanceSummaryTable tbody');
+        tbody.innerHTML = '';
+    
+        matrixSizes.forEach(size => {
+            // Collect all results for this size
+            const sizeResults = [
+                ...results.naiveDecoupled.filter(r => r.verified && r.size === size),
+                ...results.sharedMemory.filter(r => r.verified && r.size === size),
+                ...results.vectorized.filter(r => r.verified && r.size === size),
+                ...results.coarsened.filter(r => r.verified && r.size === size),
+                ...results.oneDTiling.filter(r => r.verified && r.size === size)
+            ].sort((a, b) => a.time - b.time);
+    
+            if (sizeResults.length === 0) return;
+    
+            const row = document.createElement('tr');
+                
+            // Matrix size cell
+            const sizeCell = document.createElement('td');
+            sizeCell.textContent = `${size}x${size}`;
+            row.appendChild(sizeCell);
+    
+            // Function to format the method description
+            function formatMethodDescription(result) {
+                let desc = result.implementation;
+                desc += ` (${result.workgroupSize.replace(',', 'x')})`;
+                
+                if (result.implementation === '1D Tiling') {
+                    if (result.tilingMultiplier) {
+                        desc += ` TM(${result.tilingMultiplier}x)`;
+                    }
+                } else {
+                    if (result.tileSize && result.tileSize !== 'N/A') {
+                        desc += ` Tile(${result.tileSize.replace(',', 'x')})`;
+                    }
+                    if (result.coarsenX && result.coarsenY) {
+                        desc += ` Coarse(${result.coarsenX}x${result.coarsenY})`;
+                    }
+                }
+                return desc;
+            }
+    
+            // Add top 3 performers
+            for (let i = 0; i < 3; i++) {
+                if (i < sizeResults.length) {
+                    const result = sizeResults[i];
+                    
+                    // Method cell
+                    const methodCell = document.createElement('td');
+                    methodCell.className = 'method-cell';
+                    methodCell.textContent = formatMethodDescription(result);
+                    row.appendChild(methodCell);
+    
+                    // Time cell
+                    const timeCell = document.createElement('td');
+                    timeCell.className = 'time-cell';
+                    timeCell.textContent = `${result.time.toFixed(2)} ms`;
+                    row.appendChild(timeCell);
+                } else {
+                    // Empty cells if no result
+                    const methodCell = document.createElement('td');
+                    methodCell.className = 'method-cell';
+                    methodCell.textContent = 'N/A';
+                    row.appendChild(methodCell);
+    
+                    const timeCell = document.createElement('td');
+                    timeCell.className = 'time-cell';
+                    timeCell.textContent = 'N/A';
+                    row.appendChild(timeCell);
+                }
+            }
+    
+            tbody.appendChild(row);
+        });
+    }
+	
+    // Generate matrices
+    async function generateMatrices(sizes) {
+        for (const N of sizes) {
+            const matrixSize = N * N;
+            const matrixA = new Float32Array(matrixSize);
+            const matrixB = new Float32Array(matrixSize);
+
+            for (let i = 0; i < matrixSize; i++) {
+                matrixA[i] = Math.random();
+                matrixB[i] = Math.random();
+            }
+
+            const bufferA = createBuffer(matrixA, GPUBufferUsage.STORAGE);
+            const bufferB = createBuffer(matrixB, GPUBufferUsage.STORAGE);
+
+            generatedMatrices[N] = { bufferA, bufferB, matrixA, matrixB };
+        }
+    }
+
+    // Verify matrix multiplication
+    function verifyMatrixMultiplication(matrixA, matrixB, resultMatrix, N, alpha, beta) {
+        for (let check = 0; check < 5; check++) {
+            const row = Math.floor(Math.random() * N);
+            const col = Math.floor(Math.random() * N);
+            let expected = 0;
+            for (let i = 0; i < N; i++) {
+                expected += matrixA[row * N + i] * matrixB[i * N + col];
+            }
+            expected = alpha * expected + beta * 0;
+            const actual = resultMatrix[row * N + col];
+            const relativeError = Math.abs((expected - actual) / expected);
+            if (relativeError > 1e-5) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Run benchmark
+    async function runBenchmark(N, workgroupSize, implementation = 'naiveDecoupled', tileSize = null, coarsenX = null, coarsenY = null, tilingMultiplier = null) {
+        let shaderCode;
+        switch(implementation) {
+            case 'naive':
+                shaderCode = getNaiveWGSL(workgroupSize);
+                break;
+            case 'naiveDecoupled':
+                shaderCode = getNaiveDecoupledWGSL(workgroupSize);
+                break;
+            case 'shared':
+                shaderCode = getNaiveDecoupledSharedMemoryWGSL(workgroupSize, tileSize);
+                break;
+            case 'vectorized':
+                shaderCode = getVectorizedSharedMemoryWGSL(workgroupSize, tileSize);
+                break;
+            case 'coarsened':
+                shaderCode = getCoarsenedSharedMemoryWGSL(workgroupSize, tileSize, coarsenX, coarsenY);
+                break;
+            case '1dtiling':
+                shaderCode = get1DSharedMemoryTilingWGSL(workgroupSize, tilingMultiplier);  // Fixed this line
+                break;
+            default:
+                throw new Error('Unknown implementation');
         }
 
-        // Download results
-        function downloadResults() {
-            const csv = [
-                'Matrix Size,Implementation,Workgroup Size,Time (ms),GFLOPS,Verified'
-            ];
+        const shaderModule = device.createShaderModule({
+            code: shaderCode
+        });
 
-            ['naive', 'decoupled', 'vectorized', 'sharedMemory'].forEach(impl => {
-                results[impl].forEach(result => {
-                    csv.push(`${result.size},${impl},${result.workgroupSize},${result.time.toFixed(2)},${result.gflops.toFixed(2)},${result.verified}`);
-                });
-            });
+        const { bufferA, bufferB, matrixA, matrixB } = generatedMatrices[N];
+        const matrixSize = N * N;
+        const resultMatrix = new Float32Array(matrixSize).fill(0);
+        const bufferC = createBuffer(resultMatrix, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
 
-            const blob = new Blob([csv.join('\n')], { type: 'text/csv' });
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.setAttribute('href', url);
-            a.setAttribute('download', 'benchmark_results.csv');
-            a.click();
+        const uniformBuffer = device.createBuffer({
+            size: 16,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
+
+        const uniformData = new ArrayBuffer(16);
+        new Uint32Array(uniformData, 0, 1)[0] = N;
+        new Float32Array(uniformData, 4, 1)[0] = 1.0;
+        new Float32Array(uniformData, 8, 1)[0] = 0.0;
+        device.queue.writeBuffer(uniformBuffer, 0, uniformData);
+
+        const bindGroupLayout = device.createBindGroupLayout({
+            entries: [
+                { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+                { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+                { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+                { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+            ],
+        });
+
+        const bindGroup = device.createBindGroup({
+            layout: bindGroupLayout,
+            entries: [
+                { binding: 0, resource: { buffer: bufferA } },
+                { binding: 1, resource: { buffer: bufferB } },
+                { binding: 2, resource: { buffer: bufferC } },
+                { binding: 3, resource: { buffer: uniformBuffer } },
+            ],
+        });
+
+        const pipeline = device.createComputePipeline({
+            layout: device.createPipelineLayout({
+                bindGroupLayouts: [bindGroupLayout],
+            }),
+            compute: {
+                module: shaderModule,
+                entryPoint: "main",
+            },
+        });
+
+        const [wx, wy] = workgroupSize.split(',').map(Number);
+        const commandEncoder = device.createCommandEncoder();
+        const passEncoder = commandEncoder.beginComputePass();
+        passEncoder.setPipeline(pipeline);
+        passEncoder.setBindGroup(0, bindGroup);
+        passEncoder.dispatchWorkgroups(Math.ceil(N / wx), Math.ceil(N / wy));
+        passEncoder.end();
+
+        const startTime = performance.now();
+        device.queue.submit([commandEncoder.finish()]);
+        await device.queue.onSubmittedWorkDone();
+        const endTime = performance.now();
+
+        const resultReadBuffer = device.createBuffer({
+            size: bufferC.size,
+            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+        });
+
+        const readbackEncoder = device.createCommandEncoder();
+        readbackEncoder.copyBufferToBuffer(bufferC, 0, resultReadBuffer, 0, bufferC.size);
+        device.queue.submit([readbackEncoder.finish()]);
+
+        await resultReadBuffer.mapAsync(GPUMapMode.READ);
+        const resultArray = new Float32Array(resultReadBuffer.getMappedRange());
+        const isVerified = verifyMatrixMultiplication(matrixA, matrixB, resultArray, N, 1.0, 0.0);
+        resultReadBuffer.unmap();
+
+        return {
+            time: endTime - startTime,
+            verified: isVerified
+        };
+    }
+
+    // Perform benchmark with validation
+    async function performBenchmark() {
+        const iterations = parseInt(document.getElementById('iterations').value);
+        const selectedSizes = Array.from(document.querySelectorAll('#sizeCheckboxes input:checked'))
+            .map(cb => parseInt(cb.value));
+
+        const selectedWorkgroups = Array.from(document.querySelectorAll('#workgroupSizes input:checked'))
+            .map(cb => cb.value);
+
+        const selectedTileSizes = Array.from(document.querySelectorAll('#tileSizes input:checked'))
+            .map(cb => cb.value);
+
+        const selectedCoarseningSizes = Array.from(document.querySelectorAll('#coarseningSizes input:checked'))
+            .map(cb => cb.value);
+
+        const selectedTileMultipliers = Array.from(document.querySelectorAll('#tileMultiplierSizes input:checked'))
+            .map(cb => parseInt(cb.value));
+
+	const runNaive = document.getElementById('naiveImplementation').checked;
+        const runDecoupledNaive = document.getElementById('naiveDecoupledImplementation').checked;
+        const runSharedMemory = document.getElementById('sharedMemoryImplementation').checked;
+        const runVectorized = document.getElementById('vectorizedImplementation').checked;
+        const runCoarsened = document.getElementById('coarsenedImplementation').checked;
+	const runOneDTiling = document.getElementById('oneDTilingImplementation').checked;
+
+        if (selectedWorkgroups.length === 0) {
+            alert('Please select at least one workgroup size');
+            return;
+        }
+    
+        if ((runSharedMemory || runVectorized || runCoarsened || runOneDTiling) && selectedTileSizes.length === 0) {
+            alert('Please select at least one tile size for Shared Memory, Vectorized, Coarsened, or 1D Tiling implementation');
+            return;
+        }
+    
+        if (!runDecoupledNaive && !runSharedMemory && !runVectorized && !runCoarsened && !runOneDTiling) {
+            alert('Please select at least one kernel');
+            return;
         }
 
-        // Update device info
-        async function updateDeviceInfo() {
-            const deviceInfoElement = document.getElementById("deviceInfo");
-            try {
-                if (!navigator.gpu) {
-                    throw new Error("WebGPU not supported on this browser.");
-                }
-                const adapter = await navigator.gpu.requestAdapter();
-                if (!adapter) {
-                    throw new Error("No appropriate GPUAdapter found.");
-                }
-                const adapterInfo = await adapter.requestAdapterInfo();
+        results = { 
+	    naive: [],
+            naiveDecoupled: [], 
+            sharedMemory: [], 
+            vectorized: [], 
+            coarsened: [],
+            oneDTiling: []
+        };
 
-                deviceInfoElement.innerHTML = `
-                    <strong>GPU Vendor:</strong> ${adapterInfo.vendor}<br>
-                    <strong>GPU Architecture:</strong> ${adapterInfo.architecture}<br>
-                    <strong>Description:</strong> ${adapterInfo.description || 'Not available'}<br>
-                    <strong>Device:</strong> ${navigator.platform}<br>
-                    <strong>Browser:</strong> ${navigator.userAgent}
-                `;
-            } catch (error) {
-                deviceInfoElement.innerHTML = `
-                    <strong>Error:</strong> ${error.message}<br>
-                    <strong>Device:</strong> ${navigator.platform}<br>
-                    <strong>Browser:</strong> ${navigator.userAgent}
-                `;
+        const resultsTable = document.getElementById('resultsTable');
+        resultsTable.innerHTML = `
+            <table>
+                <thead>
+                    <tr>
+                        <th>Implementation</th>
+                        <th>Matrix Size</th>
+                        <th>Workgroup Size</th>
+                        <th>Tile Size</th>
+                        <th>Vectorized</th>
+                        <th>Tile Multiplier</th>
+                        <th>Average Time (ms)</th>
+                        <th>GFLOPS</th>
+                        <th>Verified</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        `;
+        const tbody = resultsTable.querySelector('tbody');
+	    
+        // Helper function for running implementation
+        async function runImplementation(type, size, workgroupSize, tileSize = null, coarsenX = null, coarsenY = null, tilingMultiplier = null) {
+            // Warm-up run
+            await runBenchmark(size, workgroupSize, type, tileSize, coarsenX, coarsenY, tilingMultiplier);
+        
+            let totalTime = 0;
+            let allVerified = true;
+        
+            for (let i = 0; i < iterations; i++) {
+                const result = await runBenchmark(
+                    size, 
+                    workgroupSize, 
+                    type, 
+                    tileSize,
+                    coarsenX,
+                    coarsenY,
+                    tilingMultiplier
+                );
+                totalTime += result.time;
+                allVerified = allVerified && result.verified;
+            }
+        
+            const avgTime = totalTime / iterations;
+            const gflops = (2 * size * size * size) / (avgTime * 1e6);
+        
+            return {
+                avgTime,
+                gflops,
+                verified: allVerified
+            };
+        }
+
+        if (runNaive) {
+            // Only use specific workgroup sizes for naive implementation
+            const naiveWorkgroupSizes = ['1,1', '2,2', '4,4', '8,8', '16,16'];
+            for (const size of selectedSizes) {
+                for (const workgroupSize of naiveWorkgroupSizes) {
+                    try {
+                        const result = await runImplementation('naive', size, workgroupSize);
+                        
+                        results.naive.push({
+                            implementation: 'Naive',
+                            size,
+                            workgroupSize,
+                            tileSize: 'N/A',
+                            time: parseFloat(result.avgTime.toFixed(2)),
+                            gflops: parseFloat(result.gflops.toFixed(2)),
+                            verified: result.verified
+                        });
+        
+                        tbody.insertRow().innerHTML = `
+                            <td>Naive</td>
+                            <td>${size}x${size}</td>
+                            <td>${workgroupSize.replace(',', 'x')}</td>
+                            <td>N/A</td>
+                            <td>No</td>
+                            <td>N/A</td>
+                            <td>${result.avgTime.toFixed(2)}</td>
+                            <td>${result.gflops.toFixed(2)}</td>
+                            <td>${result.verified ? '✓' : '✗'}</td>
+                        `;
+                    } catch (error) {
+                        console.error('Error in naive implementation:', error);
+                    }
+                }
             }
         }
 
-        // Initialize
-        async function initialize() {
-            try {
-                await initWebGPU();
-                await updateDeviceInfo();
+	// Run naiveDecoupled implementation
+        if (runDecoupledNaive) {
+            for (const size of selectedSizes) {
+                for (const workgroupSize of selectedWorkgroups) {
+                    try {
+                        const result = await runImplementation('naiveDecoupled', size, workgroupSize);
+                        
+                        results.naiveDecoupled.push({
+                            implementation: 'DecoupledNaive',
+                            size,
+                            workgroupSize,
+                            tileSize: 'N/A',
+                            time: parseFloat(result.avgTime.toFixed(2)),
+                            gflops: parseFloat(result.gflops.toFixed(2)),
+                            verified: result.verified
+                        });
 
-                // Initialize matrix size checkboxes
-                const sizesContainer = document.getElementById('sizeCheckboxes');
-                sizesContainer.innerHTML = matrixSizes.map(size => `
-                    <label>
-                        <input type="checkbox" value="${size}" checked>
-                        ${size}x${size}
-                    </label>
-                `).join(' ');
+                         tbody.insertRow().innerHTML = `
+                             <td>DecoupledNaive</td>
+                             <td>${size}x${size}</td>
+                             <td>${workgroupSize.replace(',', 'x')}</td>
+                             <td>N/A</td>
+                             <td>No</td>
+                             <td>N/A</td>
+                             <td>${result.avgTime.toFixed(2)}</td>
+                             <td>${result.gflops.toFixed(2)}</td>
+                             <td>${result.verified ? '✓' : '✗'}</td>
+                        `;
+                    } catch (error) {
+                        console.error('Error in naiveDecoupled implementation:', error);
+                    }
+                }
+            }
+        }
 
-                // Initialize workgroup checkboxes
-                const naiveWorkgroupsContainer = document.getElementById('naiveWorkgroups');
-                const decoupledWorkgroupsContainer = document.getElementById('decoupledWorkgroups');
-		const vectorizedWorkgroupsContainer = document.getElementById('vectorizedWorkgroups');
-		const sharedMemoryWorkgroupsContainer = document.getElementById('sharedMemoryWorkgroups');
+        // Run shared memory implementation
+        if (runSharedMemory) {
+            for (const size of selectedSizes) {
+                for (const workgroupSize of selectedWorkgroups) {
+                    for (const tileSize of selectedTileSizes) {
+                        try {
+                            if (!isTileSizeCompatibleWithWorkgroup(tileSize, workgroupSize)) continue;
 
-                naiveWorkgroupsContainer.innerHTML = naiveWorkgroupSizes.map(size => `
-                    <label>
-                        <input type="checkbox" value="${size}" ${size === '16,16' ? 'checked' : ''}>
-                        ${size.replace(',', 'x')}
-                    </label>
-                `).join('');
+                            const result = await runImplementation('shared', size, workgroupSize, tileSize);
+                            
+                            results.sharedMemory.push({
+                                implementation: 'Shared Memory',
+                                size,
+                                workgroupSize,
+                                tileSize,
+                                time: parseFloat(result.avgTime.toFixed(2)),
+                                gflops: parseFloat(result.gflops.toFixed(2)),
+                                verified: result.verified
+                            });
 
-                decoupledWorkgroupsContainer.innerHTML = decoupledWorkgroupSizes.map(size => `
-                    <label>
-                        <input type="checkbox" value="${size}" ${size === '16,16' ? 'checked' : ''}>
-                        ${size.replace(',', 'x')}
-                    </label>
-                `).join('');
+                            tbody.insertRow().innerHTML = `
+                                <td>Shared Memory</td>
+                                <td>${size}x${size}</td>
+                                <td>${workgroupSize.replace(',', 'x')}</td>
+                                <td>${tileSize.replace(',', 'x')}</td>
+                                <td>No</td>
+                                <td>N/A</td>
+                                <td>${result.avgTime.toFixed(2)}</td>
+                                <td>${result.gflops.toFixed(2)}</td>
+                                <td>${result.verified ? '✓' : '✗'}</td>
+                            `;
+                        } catch (error) {
+                            console.error('Error in shared memory implementation:', error);
+                        }
+                    }
+                }
+            }
+        }
 
-                vectorizedWorkgroupsContainer.innerHTML = vectorizedWorkgroupSizes.map(size => `
-                    <label>
-                        <input type="checkbox" value="${size}" ${size === '16,16' ? 'checked' : ''}>
-                        ${size.replace(',', 'x')}
-                    </label>
-                `).join('');
+        // Run vectorized implementation
+        if (runVectorized) {
+            for (const size of selectedSizes) {
+                for (const workgroupSize of selectedWorkgroups) {
+                    for (const tileSize of selectedTileSizes) {
+                        try {
+                            // Skip if tile size is too small for vectorization
+                            const [tRows, tCols] = tileSize.split(',').map(Number);
+                            if (tRows < 4 || tCols < 4) continue;
+                            
+                            if (!isTileSizeCompatibleWithWorkgroup(tileSize, workgroupSize)) continue;
 
-                sharedMemoryWorkgroupsContainer.innerHTML = sharedMemoryWorkgroupSizes.map(size => `
-                    <label>
-                        <input type="checkbox" value="${size}" ${size === '16,16' ? 'checked' : ''}>
-                        ${size.replace(',', 'x')}
-                    </label>
-                `).join('');
+                            const result = await runImplementation('vectorized', size, workgroupSize, tileSize);
+                            
+                            results.vectorized.push({
+                                implementation: 'Vectorized',
+                                size,
+                                workgroupSize,
+                                tileSize,
+                                time: parseFloat(result.avgTime.toFixed(2)),
+                                gflops: parseFloat(result.gflops.toFixed(2)),
+                                verified: result.verified
+                            });
 
-                document.getElementById('generateMatrices').addEventListener('click', async () => {
-                    const selectedSizes = Array.from(document.querySelectorAll('#sizeCheckboxes input:checked'))
-                        .map(cb => parseInt(cb.value));
+                            tbody.insertRow().innerHTML = `
+                                <td>Vectorized</td>
+                                <td>${size}x${size}</td>
+                                <td>${workgroupSize.replace(',', 'x')}</td>
+                                <td>${tileSize.replace(',', 'x')}</td>
+                                <td>Yes</td>
+                                <td>N/A</td>
+                                <td>${result.avgTime.toFixed(2)}</td>
+                                <td>${result.gflops.toFixed(2)}</td>
+                                <td>${result.verified ? '✓' : '✗'}</td>
+                            `;
+                        } catch (error) {
+                            console.error('Error in vectorized implementation:', error);
+                        }
+                    }
+                }
+            }
+        }
+
+        if (runCoarsened) {
+            for (const size of selectedSizes) {
+                for (const workgroupSize of selectedWorkgroups) {
+                    for (const tileSize of selectedTileSizes) {
+                        for (const coarseningSize of selectedCoarseningSizes) {
+                            try {
+                                if (!isTileSizeCompatibleWithWorkgroup(tileSize, workgroupSize)) continue;
+        
+                                const [coarsenX, coarsenY] = coarseningSize.split(',').map(Number);
+				console.log('Debug - Coarsening values:', coarsenX, coarsenY);
+                                const result = await runImplementation('coarsened', size, workgroupSize, tileSize, coarsenX, coarsenY);
+                                
+                                results.coarsened.push({
+                                    implementation: 'Coarsened',
+                                    size,
+                                    workgroupSize,
+                                    tileSize,
+                                    coarsenX,
+                                    coarsenY,
+                                    time: parseFloat(result.avgTime.toFixed(2)),
+                                    gflops: parseFloat(result.gflops.toFixed(2)),
+                                    verified: result.verified
+                                });
+        
+                                tbody.insertRow().innerHTML = `
+                                    <td>Coarsened (${coarsenX}x${coarsenY})</td>
+                                    <td>${size}x${size}</td>
+                                    <td>${workgroupSize.replace(',', 'x')}</td>
+                                    <td>${tileSize.replace(',', 'x')}</td>
+                                    <td>No</td>
+                                    <td>N/A</td>
+                                    <td>${result.avgTime.toFixed(2)}</td>
+                                    <td>${result.gflops.toFixed(2)}</td>
+                                    <td>${result.verified ? '✓' : '✗'}</td>
+                                `;
+                            } catch (error) {
+                                console.error('Error in coarsened implementation:', error);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (runOneDTiling) {
+            for (const size of selectedSizes) {
+                for (const workgroupSize of selectedWorkgroups) {
+                    for (const tm of selectedTileMultipliers) {
+                        try {
+                            const result = await runImplementation('1dtiling', size, workgroupSize, null, null, null, tm);
+                            
+                            results.oneDTiling.push({
+                                implementation: '1D Tiling',
+                                size,
+                                workgroupSize,
+                                tileSize: `${tm}x`,
+                                tilingMultiplier: tm,
+                                time: parseFloat(result.avgTime.toFixed(2)),
+                                gflops: parseFloat(result.gflops.toFixed(2)),
+                                verified: result.verified
+                            });
+       
+                            tbody.insertRow().innerHTML = `
+                                <td>1D Tiling</td>
+                                <td>${size}x${size}</td>
+                                <td>${workgroupSize.replace(',', 'x')}</td>
+                                <td>N/A</td>
+                                <td>No</td>
+                                <td>${tm}x</td>
+                                <td>${result.avgTime.toFixed(2)}</td>
+                                <td>${result.gflops.toFixed(2)}</td>
+                                <td>${result.verified ? '✓' : '✗'}</td>
+                            `;
+                        } catch (error) {
+                            console.error('Error in 1D Tiling implementation:', error);
+                        }
+                    }
+                }
+            }
+        }
+
+        updateChart();
+        createBarCharts();
+	updatePerformanceSummary();
+    }
+
+    // Download results
+    function downloadResults() {
+        const csv = [
+            'Implementation,Matrix Size,Workgroup Size,Tile Size,Vectorized,Time (ms),GFLOPS,Verified'
+        ];
+
+        [...results.naive,
+	 ...results.naiveDecoupled, 
+         ...results.sharedMemory, 
+         ...results.vectorized, 
+         ...results.coarsened,
+         ...results.oneDTiling
+        ].forEach(result => {
+            const coarsening = result.implementation === 'Coarsened' ? 
+                `${result.coarsenX}x${result.coarsenY}` : 'N/A';
+            csv.push(`${result.implementation},${result.size},${result.workgroupSize},${result.tileSize},${coarsening},${result.time.toFixed(2)},${result.gflops.toFixed(2)},${result.verified}`);
+        });
+
+        const blob = new Blob([csv.join('\n')], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.setAttribute('href', url);
+        a.setAttribute('download', 'benchmark_results.csv');
+        a.click();
+    }
+
+    // Update device info
+    async function updateDeviceInfo() {
+        const deviceInfoElement = document.getElementById("deviceInfo");
+        try {
+            if (!navigator.gpu) {
+                throw new Error("WebGPU not supported on this browser.");
+            }
+            const adapter = await navigator.gpu.requestAdapter();
+            if (!adapter) {
+                throw new Error("No appropriate GPUAdapter found.");
+            }
+            const adapterInfo = await adapter.requestAdapterInfo();
+
+            deviceInfoElement.innerHTML = `
+                <strong>GPU Vendor:</strong> ${adapterInfo.vendor}<br>
+                <strong>GPU Architecture:</strong> ${adapterInfo.architecture}<br>
+                <strong>Description:</strong> ${adapterInfo.description || 'Not available'}<br>
+                <strong>Device:</strong> ${navigator.platform}<br>
+                <strong>Browser:</strong> ${navigator.userAgent}
+            `;
+        } catch (error) {
+            deviceInfoElement.innerHTML = `
+                <strong>Error:</strong> ${error.message}<br>
+                <strong>Device:</strong> ${navigator.platform}<br>
+                <strong>Browser:</strong> ${navigator.userAgent}
+            `;
+        }
+    }
+
+    // Initialize
+    async function initialize() {
+        try {
+            await initWebGPU();
+            await updateDeviceInfo();
+    
+            // Initialize matrix size checkboxes
+            const sizesContainer = document.getElementById('sizeCheckboxes');
+            sizesContainer.innerHTML = matrixSizes.map(size => `
+                <label>
+                    <input type="checkbox" value="${size}" checked>
+                    ${size}x${size}
+                </label>
+            `).join(' ');
+    
+            // Initialize workgroup size checkboxes
+            const workgroupsContainer = document.getElementById('workgroupSizes');
+            workgroupsContainer.innerHTML = workgroupSizes.map(size => `
+                <label>
+                    <input type="checkbox" value="${size}" ${size === '16,16' ? 'checked' : ''}>
+                    ${size.replace(',', 'x')}
+                </label>
+            `).join('');
+    
+            // Add event listener for workgroup size changes
+            document.querySelectorAll('#workgroupSizes input[type="checkbox"]').forEach(checkbox => {
+                checkbox.addEventListener('change', updateTileSizes);
+            });
+    
+            // Initial update of tile sizes
+            updateTileSizes();
+    
+            // Add coarsening configuration
+            const coarseningConfig = document.createElement('div');
+            coarseningConfig.className = 'config-section';
+            coarseningConfig.innerHTML = `
+                <div class="section-header">
+                    <h4>Coarsening Sizes</h4>
+                    <div class="button-group">
+                        <button class="small-button" onclick="handleCoarseningSizes('reset')">Reset</button>
+                        <button class="small-button" onclick="handleCoarseningSizes('selectAll')">Select All</button>
+                    </div>
+                </div>
+                <div id="coarseningSizes" class="options-grid">
+                    ${coarseningSizes.map(size => `
+                        <label>
+                            <input type="checkbox" value="${size}" ${size === '2,2' ? 'checked' : ''}>
+                            ${size.replace(',', 'x')}
+                        </label>
+                    `).join('')}
+                </div>
+            `;
+            document.querySelector('.implementation-selector').parentNode.before(coarseningConfig);
+    
+            const tileMultiplierConfig = document.createElement('div');
+            tileMultiplierConfig.className = 'config-section';
+            tileMultiplierConfig.innerHTML = `
+                <div class="section-header">
+                    <h4>Tile Multiplier Sizes</h4>
+                    <div class="button-group">
+                        <button class="small-button" onclick="handleTileMultiplierSizes('reset')">Reset</button>
+                        <button class="small-button" onclick="handleTileMultiplierSizes('selectAll')">Select All</button>
+                    </div>
+                </div>
+                <div id="tileMultiplierSizes" class="options-grid">
+                    ${tileMultiplierSizes.map(tm => `
+                        <label>
+                            <input type="checkbox" value="${tm}" ${tm === 4 ? 'checked' : ''}>
+                            ${tm}x
+                        </label>
+                    `).join('')}
+                </div>
+            `;
+            
+            document.querySelector('.implementation-selector').parentNode.before(tileMultiplierConfig);
+
+            // Event listeners for buttons
+            document.getElementById('generateMatrices').addEventListener('click', async () => {
+                const selectedSizes = Array.from(document.querySelectorAll('#sizeCheckboxes input:checked'))
+                    .map(cb => parseInt(cb.value));
+                if (selectedSizes.length === 0) {
+                    alert('Please select at least one matrix size');
+                    return;
+                }
+                try {
+                    document.getElementById('generateMatrices').disabled = true;
+                    document.getElementById('generateMatrices').textContent = 'Generating...';
                     await generateMatrices(selectedSizes);
                     alert('Matrices generated successfully!');
-                });
-
-                document.getElementById('runBenchmark').addEventListener('click', performBenchmark);
-                document.getElementById('downloadResults').addEventListener('click', downloadResults);
-
-            } catch (error) {
-                console.error('Initialization failed:', error);
-                alert('Failed to initialize WebGPU: ' + error.message);
-            }
+                } catch (error) {
+                    console.error('Error generating matrices:', error);
+                    alert('Error generating matrices: ' + error.message);
+                } finally {
+                    document.getElementById('generateMatrices').disabled = false;
+                    document.getElementById('generateMatrices').textContent = 'Generate Matrices';
+                }
+            });
+    
+            document.getElementById('runBenchmark').addEventListener('click', async () => {
+                try {
+                    document.getElementById('runBenchmark').disabled = true;
+                    document.getElementById('runBenchmark').textContent = 'Running...';
+                    await performBenchmark();
+                } catch (error) {
+                    console.error('Error running benchmark:', error);
+                    alert('Error running benchmark: ' + error.message);
+                } finally {
+                    document.getElementById('runBenchmark').disabled = false;
+                    document.getElementById('runBenchmark').textContent = 'Run Benchmark';
+                }
+            });
+    
+            document.getElementById('downloadResults').addEventListener('click', downloadResults);
+    
+        } catch (error) {
+            console.error('Initialization failed:', error);
+            alert('Failed to initialize WebGPU: ' + error.message);
         }
+    }
 
-        window.addEventListener('load', initialize);
+    // Handle matrix size selection buttons
+    function handleMatrixSizes(action) {
+        const checkboxes = document.querySelectorAll('#sizeCheckboxes input[type="checkbox"]');
+        checkboxes.forEach(checkbox => {
+            checkbox.checked = action === 'selectAll';
+        });
+    }
+
+    // Handle workgroup selection buttons
+    function handleWorkgroups(action) {
+        const checkboxes = document.querySelectorAll('#workgroupSizes input[type="checkbox"]');
+        checkboxes.forEach(checkbox => {
+            checkbox.checked = action === 'selectAll';
+        });
+        updateTileSizes();
+    }
+
+    // Handle tile size selection buttons
+    function handleTileSizes(action) {
+        const checkboxes = document.querySelectorAll('#tileSizes input[type="checkbox"]');
+        checkboxes.forEach(checkbox => {
+            checkbox.checked = action === 'selectAll';
+        });
+    }
+
+    //Handle coarsening sizes
+    function handleCoarseningSizes(action) {
+        const checkboxes = document.querySelectorAll('#coarseningSizes input[type="checkbox"]');
+        checkboxes.forEach(checkbox => {
+            checkbox.checked = action === 'selectAll';
+            if (action === 'reset' && checkbox.value === '2,2') {
+                checkbox.checked = true;
+            }
+        });
+    }
+
+    function handleTileMultiplierSizes(action) {
+        const checkboxes = document.querySelectorAll('#tileMultiplierSizes input[type="checkbox"]');
+        checkboxes.forEach(checkbox => {
+            if (action === 'selectAll') {
+                checkbox.checked = true;
+            } else if (action === 'reset') {
+                checkbox.checked = parseInt(checkbox.value) === 4;
+            }
+        });
+    }
+    window.addEventListener('load', initialize);
     </script>
 </body>
 </html>
+
