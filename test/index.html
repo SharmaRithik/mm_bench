@@ -919,15 +919,18 @@ function get1DSharedMemoryTilingWGSL(workgroupSize, tilingMultiplier) {
 }
 
     // Initialize WebGPU
-    async function initWebGPU() {
+    async function initializeWebGPU() {
         if (!navigator.gpu) {
-            throw new Error("WebGPU not supported");
+            throw new Error("WebGPU not supported on this browser.");
         }
         const adapter = await navigator.gpu.requestAdapter();
+        if (!adapter) {
+            throw new Error("No appropriate GPUAdapter found.");
+        }
         device = await adapter.requestDevice();
         return device;
     }
-			    
+		    
     // Create buffer helper function
     function createBuffer(data, usage) {
         const buffer = device.createBuffer({
@@ -1923,7 +1926,7 @@ function get1DSharedMemoryTilingWGSL(workgroupSize, tilingMultiplier) {
     // Initialize
     async function initialize() {
         try {
-            await initWebGPU();
+            await initializeWebGPU();
             await updateDeviceInfo();
     
             // Initialize matrix size checkboxes
