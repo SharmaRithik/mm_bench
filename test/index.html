@@ -331,6 +331,7 @@
     let generatedMatrices = {};
     let benchmarkChart;
     let results = {
+	naive: [],
         naiveDecoupled: [],
         sharedMemory: [],
         vectorized: [],
@@ -1311,6 +1312,7 @@ function get1DSharedMemoryTilingWGSL(workgroupSize, tilingMultiplier) {
         matrixSizes.forEach(size => {
             // Collect all results for this size
             const sizeResults = [
+		...results.naive.filter(r => r.verified && r.size === size),
                 ...results.naiveDecoupled.filter(r => r.verified && r.size === size),
                 ...results.sharedMemory.filter(r => r.verified && r.size === size),
                 ...results.vectorized.filter(r => r.verified && r.size === size),
