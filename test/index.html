@@ -1559,16 +1559,6 @@ function get1DSharedMemoryTilingWGSL(workgroupSize, tilingMultiplier) {
             return;
         }
     
-        if ((runSharedMemory || runVectorized || runCoarsened || runOneDTiling) && selectedTileSizes.length === 0) {
-            alert('Please select at least one tile size for Shared Memory, Vectorized, Coarsened, or 1D Tiling implementation');
-            return;
-        }
-    
-        if (!runDecoupledNaive && !runSharedMemory && !runVectorized && !runCoarsened && !runOneDTiling) {
-            alert('Please select at least one kernel');
-            return;
-        }
-
         results = { 
 	    naive: [],
             naiveDecoupled: [], 
