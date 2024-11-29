@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGPU Adapter Information</title>
+</head>
+<body>
+    <h1>WebGPU Adapter Information</h1>
+    <p>This page retrieves all possible details from the WebGPU adapter and provides additional suggestions for extending the data.</p>
+    <pre id="info"></pre>
+
+    <script>
+        async function getWebGPUInfo() {
+            if (!navigator.gpu) {
+                document.getElementById("info").innerText = "WebGPU is not supported on this browser.";
+                return;
+            }
+
+            const adapter = await navigator.gpu.requestAdapter();
+            const device = await adapter.requestDevice();
+
+            let output = "";
+
+            // Adapter name
+            output += `Adapter Name: ${adapter.name}\n`;
+
+            // Adapter Limits
+            output += "\nAdapter Limits:\n";
+            for (const [key, value] of Object.entries(adapter.limits)) {
+                output += `  ${key}: ${value}\n`;
+            }
+
+            // Supported Features
+            output += "\nSupported Features:\n";
+            for (const feature of adapter.features) {
+                output += `  ${feature}\n`;
+            }
+
+            // Device-Specific Details (basic default queue availability)
+            output += "\nDevice-Specific Details:\n";
+            output += `  Default Queue: ${device ? "Available" : "Not Available"}\n`;
+
+            document.getElementById("info").innerText = output;
+        }
+
+        getWebGPUInfo();
+    </script>
+</body>
+</html>
+
