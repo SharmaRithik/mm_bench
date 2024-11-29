@@ -3,20 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebGPU GFLOPS Benchmark</title>
+    <title>WebGPU GFLOPS Benchmark (Revised)</title>
 </head>
 <body>
-    <h1>WebGPU GFLOPS Benchmark</h1>
+    <h1>WebGPU GFLOPS Benchmark (Revised)</h1>
     <p>Results will be displayed below:</p>
     <div id="results"></div>
 
     <script>
+        // Theoretical GFLOPS: Based on known specs
         async function method1_theoreticalGFLOPS() {
-            // Method 1: Theoretical Calculation
-            // Replace these values with known specifications of your GPU
-            const smCount = 46; // Number of Streaming Multiprocessors (SMs)
-            const coresPerSM = 128; // CUDA cores per SM
-            const clockRateGHz = 2.505; // Clock speed in GHz
+            // Replace these with your GPU specifications
+            const smCount = 46; // Streaming Multiprocessors (SMs)
+            const coresPerSM = 128; // CUDA Cores per SM
+            const clockRateGHz = 2.505; // Clock Rate in GHz
             const fmaFactor = 2; // 2 for Fused Multiply-Add (FMA)
 
             const peakGFLOPS = smCount * coresPerSM * clockRateGHz * fmaFactor;
@@ -24,8 +24,8 @@
             document.getElementById("results").innerHTML += `<p><b>Method 1:</b> Theoretical GFLOPS = ${peakGFLOPS.toFixed(2)} GFLOPS</p>`;
         }
 
+        // Achieved GFLOPS using Optimized Shader
         async function method2_optimizedShader() {
-            // Method 2: Optimized Compute Shader to measure achievable GFLOPS
             if (!navigator.gpu) {
                 console.error("WebGPU is not supported on this browser.");
                 document.getElementById("results").innerHTML += `<p><b>Method 2:</b> WebGPU is not supported on this browser.</p>`;
@@ -45,13 +45,13 @@
                 code: `
                 @group(0) @binding(0) var<storage, read_write> data: array<f32>;
 
-                @compute @workgroup_size(256)
+                @compute @workgroup_size(128)
                 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
                     let index = id.x;
                     if (index >= arrayLength(&data)) { return; }
 
                     var value = data[index];
-                    for (var i = 0u; i < 1_000_000u; i = i + 1u) {
+                    for (var i = 0u; i < 100000u; i = i + 1u) {
                         value = value * 1.01 + 0.1; // Fused Multiply-Add (FMA) operations
                     }
                     data[index] = value;
@@ -89,7 +89,7 @@
             passEncoder.setPipeline(pipeline);
             passEncoder.setBindGroup(0, bindGroup);
 
-            const workgroupCount = Math.ceil(dataLength / 256);
+            const workgroupCount = Math.ceil(dataLength / 128);
             passEncoder.dispatchWorkgroups(workgroupCount);
             passEncoder.end();
 
@@ -99,15 +99,15 @@
             const end = performance.now();
 
             const elapsedTime = (end - start) / 1000; // Convert ms to seconds
-            const operations = dataLength * 1_000_000 * 2; // Total FMA operations (multiply + add)
+            const operations = dataLength * 100000 * 2; // Total FMA operations
             const gflops = (operations / elapsedTime) / 1e9; // GFLOPS
 
             console.log(`[Method 2] Achieved GFLOPS: ${gflops.toFixed(2)}`);
             document.getElementById("results").innerHTML += `<p><b>Method 2:</b> Achieved GFLOPS = ${gflops.toFixed(2)} GFLOPS</p>`;
         }
 
+        // Matrix Multiplication Benchmark
         async function method3_matrixMultiplication() {
-            // Method 3: Matrix Multiplication Benchmark
             if (!navigator.gpu) {
                 console.error("WebGPU is not supported on this browser.");
                 document.getElementById("results").innerHTML += `<p><b>Method 3:</b> WebGPU is not supported on this browser.</p>`;
@@ -144,7 +144,7 @@
                     let row = id.y;
                     let col = id.x;
 
-                    let size = 1024; // Matrix size
+                    let size = 1024;
                     var sum: f32 = 0.0;
 
                     for (var k = 0u; k < size; k = k + 1u) {
