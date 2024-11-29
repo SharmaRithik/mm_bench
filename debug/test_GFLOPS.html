@@ -7,14 +7,28 @@
 </head>
 <body>
     <h1>WebGPU GFLOPS Benchmark</h1>
-    <p>Check the console for results and also see the results below:</p>
+    <p>Results will be displayed below:</p>
     <div id="results"></div>
 
     <script>
-        async function measureMaxGFLOPS() {
+        async function method1_theoreticalGFLOPS() {
+            // Method 1: Theoretical Calculation
+            // Replace these values with known specifications of your GPU
+            const smCount = 46; // Number of Streaming Multiprocessors (SMs)
+            const coresPerSM = 128; // CUDA cores per SM
+            const clockRateGHz = 2.505; // Clock speed in GHz
+            const fmaFactor = 2; // 2 for Fused Multiply-Add (FMA)
+
+            const peakGFLOPS = smCount * coresPerSM * clockRateGHz * fmaFactor;
+            console.log(`[Method 1] Theoretical GFLOPS: ${peakGFLOPS.toFixed(2)}`);
+            document.getElementById("results").innerHTML += `<p><b>Method 1:</b> Theoretical GFLOPS = ${peakGFLOPS.toFixed(2)} GFLOPS</p>`;
+        }
+
+        async function method2_optimizedShader() {
+            // Method 2: Optimized Compute Shader to measure achievable GFLOPS
             if (!navigator.gpu) {
                 console.error("WebGPU is not supported on this browser.");
-                document.getElementById("results").innerHTML = "<p>WebGPU is not supported on this browser.</p>";
+                document.getElementById("results").innerHTML += `<p><b>Method 2:</b> WebGPU is not supported on this browser.</p>`;
                 return;
             }
 
@@ -31,13 +45,13 @@
                 code: `
                 @group(0) @binding(0) var<storage, read_write> data: array<f32>;
 
-                @compute @workgroup_size(128)
+                @compute @workgroup_size(256)
                 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
                     let index = id.x;
                     if (index >= arrayLength(&data)) { return; }
 
                     var value = data[index];
-                    for (var i = 0u; i < 1000000u; i = i + 1u) {
+                    for (var i = 0u; i < 1_000_000u; i = i + 1u) {
                         value = value * 1.01 + 0.1; // Fused Multiply-Add (FMA) operations
                     }
                     data[index] = value;
@@ -75,7 +89,7 @@
             passEncoder.setPipeline(pipeline);
             passEncoder.setBindGroup(0, bindGroup);
 
-            const workgroupCount = Math.ceil(dataLength / 128); // Total workgroups
+            const workgroupCount = Math.ceil(dataLength / 256);
             passEncoder.dispatchWorkgroups(workgroupCount);
             passEncoder.end();
 
@@ -85,18 +99,113 @@
             const end = performance.now();
 
             const elapsedTime = (end - start) / 1000; // Convert ms to seconds
-            const operations = dataLength * 1000000 * 2; // Total FMA operations (multiply + add)
+            const operations = dataLength * 1_000_000 * 2; // Total FMA operations (multiply + add)
             const gflops = (operations / elapsedTime) / 1e9; // GFLOPS
 
-            console.log(`Elapsed Time: ${elapsedTime.toFixed(3)} seconds`);
-            console.log(`Max GFLOPS: ${gflops.toFixed(2)}`);
-            document.getElementById("results").innerHTML = `
-                <p>Elapsed Time: ${elapsedTime.toFixed(3)} seconds</p>
-                <p>Max GFLOPS: ${gflops.toFixed(2)}</p>
-            `;
+            console.log(`[Method 2] Achieved GFLOPS: ${gflops.toFixed(2)}`);
+            document.getElementById("results").innerHTML += `<p><b>Method 2:</b> Achieved GFLOPS = ${gflops.toFixed(2)} GFLOPS</p>`;
         }
 
-        measureMaxGFLOPS();
+        async function method3_matrixMultiplication() {
+            // Method 3: Matrix Multiplication Benchmark
+            if (!navigator.gpu) {
+                console.error("WebGPU is not supported on this browser.");
+                document.getElementById("results").innerHTML += `<p><b>Method 3:</b> WebGPU is not supported on this browser.</p>`;
+                return;
+            }
+
+            const adapter = await navigator.gpu.requestAdapter();
+            const device = await adapter.requestDevice();
+
+            const matrixSize = 1024; // Size of the square matrices
+            const bufferSize = matrixSize * matrixSize * Float32Array.BYTES_PER_ELEMENT;
+
+            const matrixA = device.createBuffer({
+                size: bufferSize,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+            });
+            const matrixB = device.createBuffer({
+                size: bufferSize,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+            });
+            const matrixC = device.createBuffer({
+                size: bufferSize,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+            });
+
+            const shaderModule = device.createShaderModule({
+                code: `
+                @group(0) @binding(0) var<storage, read> matrixA: array<f32>;
+                @group(0) @binding(1) var<storage, read> matrixB: array<f32>;
+                @group(0) @binding(2) var<storage, write> matrixC: array<f32>;
+
+                @compute @workgroup_size(16, 16)
+                fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+                    let row = id.y;
+                    let col = id.x;
+
+                    let size = 1024; // Matrix size
+                    var sum: f32 = 0.0;
+
+                    for (var k = 0u; k < size; k = k + 1u) {
+                        let a = matrixA[row * size + k];
+                        let b = matrixB[k * size + col];
+                        sum = sum + a * b;
+                    }
+
+                    matrixC[row * size + col] = sum;
+                }
+                `,
+            });
+
+            const bindGroupLayout = device.createBindGroupLayout({
+                entries: [
+                    { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+                    { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+                    { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+                ],
+            });
+
+            const pipeline = device.createComputePipeline({
+                layout: device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
+                compute: { module: shaderModule, entryPoint: "main" },
+            });
+
+            const bindGroup = device.createBindGroup({
+                layout: bindGroupLayout,
+                entries: [
+                    { binding: 0, resource: { buffer: matrixA } },
+                    { binding: 1, resource: { buffer: matrixB } },
+                    { binding: 2, resource: { buffer: matrixC } },
+                ],
+            });
+
+            const commandEncoder = device.createCommandEncoder();
+            const passEncoder = commandEncoder.beginComputePass();
+            passEncoder.setPipeline(pipeline);
+            passEncoder.setBindGroup(0, bindGroup);
+
+            const workgroupCount = matrixSize / 16;
+            passEncoder.dispatchWorkgroups(workgroupCount, workgroupCount);
+            passEncoder.end();
+
+            const start = performance.now();
+            device.queue.submit([commandEncoder.finish()]);
+            await device.queue.onSubmittedWorkDone();
+            const end = performance.now();
+
+            const elapsedTime = (end - start) / 1000; // Convert ms to seconds
+            const operations = 2 * Math.pow(matrixSize, 3); // FLOPs for matrix multiplication
+            const gflops = (operations / elapsedTime) / 1e9; // GFLOPS
+
+            console.log(`[Method 3] Matrix Multiplication GFLOPS: ${gflops.toFixed(2)}`);
+            document.getElementById("results").innerHTML += `<p><b>Method 3:</b> Matrix Multiplication GFLOPS = ${gflops.toFixed(2)} GFLOPS</p>`;
+        }
+
+        // Run all methods sequentially
+        method1_theoreticalGFLOPS();
+        method2_optimizedShader();
+        method3_matrixMultiplication();
     </script>
 </body>
 </html>
