@@ -1,72 +1,87 @@
-async function measureGFLOPS() {
-    if (!navigator.gpu) {
-        console.error("WebGPU is not supported on this browser.");
-        return;
-    }
-
-    const adapter = await navigator.gpu.requestAdapter();
-    const device = await adapter.requestDevice();
-
-    const dataLength = 1 << 20; // Array length (1 million elements)
-    const dataBuffer = device.createBuffer({
-        size: dataLength * Float32Array.BYTES_PER_ELEMENT,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
-    });
-
-    const shaderModule = device.createShaderModule({
-        code: `
-        @group(0) @binding(0) var<storage, read_write> data: array<f32>;
-
-        @compute @workgroup_size(64)
-        fn main(@builtin(global_invocation_id) id: vec3<u32>) {
-            let index = id.x;
-            if (index >= arrayLength(&data)) { return; }
-
-            var value = data[index];
-            for (var i = 0u; i < 10000u; i = i + 1u) {
-                value = value * 1.01 + 0.1; // Fused Multiply-Add (FMA) operations
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGPU GFLOPS Benchmark</title>
+</head>
+<body>
+    <h1>WebGPU GFLOPS Benchmark</h1>
+    <script>
+        async function measureGFLOPS() {
+            if (!navigator.gpu) {
+                console.error("WebGPU is not supported on this browser.");
+                return;
             }
-            data[index] = value;
+
+            const adapter = await navigator.gpu.requestAdapter();
+            const device = await adapter.requestDevice();
+
+            const dataLength = 1 << 20; // Array length (1 million elements)
+            const dataBuffer = device.createBuffer({
+                size: dataLength * Float32Array.BYTES_PER_ELEMENT,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+            });
+
+            const shaderModule = device.createShaderModule({
+                code: `
+                @group(0) @binding(0) var<storage, read_write> data: array<f32>;
+
+                @compute @workgroup_size(64)
+                fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+                    let index = id.x;
+                    if (index >= arrayLength(&data)) { return; }
+
+                    var value = data[index];
+                    for (var i = 0u; i < 10000u; i = i + 1u) {
+                        value = value * 1.01 + 0.1; // Fused Multiply-Add (FMA) operations
+                    }
+                    data[index] = value;
+                }
+                `,
+            });
+
+            const pipeline = device.createComputePipeline({
+                compute: { module: shaderModule, entryPoint: "main" },
+            });
+
+            const bindGroupLayout = pipeline.getBindGroupLayout(0);
+            const bindGroup = device.createBindGroup({
+                layout: bindGroupLayout,
+                entries: [
+                    {
+                        binding: 0,
+                        resource: { buffer: dataBuffer },
+                    },
+                ],
+            });
+
+            const commandEncoder = device.createCommandEncoder();
+            const passEncoder = commandEncoder.beginComputePass();
+            passEncoder.setPipeline(pipeline);
+            passEncoder.setBindGroup(0, bindGroup);
+
+            const workgroupCount = Math.ceil(dataLength / 64); // 64 threads per workgroup
+            passEncoder.dispatchWorkgroups(workgroupCount);
+            passEncoder.end();
+
+            const start = performance.now();
+            device.queue.submit([commandEncoder.finish()]);
+            await device.queue.onSubmittedWorkDone();
+            const end = performance.now();
+
+            const elapsedTime = (end - start) / 1000; // Convert ms to seconds
+            const operations = dataLength * 10000; // Total FMA operations
+            const gflops = (operations / elapsedTime) / 1e9; // GFLOPS
+
+            console.log(`Elapsed Time: ${elapsedTime.toFixed(3)} seconds`);
+            console.log(`GFLOPS: ${gflops.toFixed(2)}`);
+            document.body.innerHTML += `<p>Elapsed Time: ${elapsedTime.toFixed(3)} seconds</p>`;
+            document.body.innerHTML += `<p>GFLOPS: ${gflops.toFixed(2)}</p>`;
         }
-        `,
-    });
 
-    const pipeline = device.createComputePipeline({
-        compute: { module: shaderModule, entryPoint: "main" },
-    });
-
-    const bindGroupLayout = pipeline.getBindGroupLayout(0);
-    const bindGroup = device.createBindGroup({
-        layout: bindGroupLayout,
-        entries: [
-            {
-                binding: 0,
-                resource: { buffer: dataBuffer },
-            },
-        ],
-    });
-
-    const commandEncoder = device.createCommandEncoder();
-    const passEncoder = commandEncoder.beginComputePass();
-    passEncoder.setPipeline(pipeline);
-    passEncoder.setBindGroup(0, bindGroup);
-
-    const workgroupCount = Math.ceil(dataLength / 64); // 64 threads per workgroup
-    passEncoder.dispatchWorkgroups(workgroupCount);
-    passEncoder.end();
-
-    const start = performance.now();
-    device.queue.submit([commandEncoder.finish()]);
-    await device.queue.onSubmittedWorkDone();
-    const end = performance.now();
-
-    const elapsedTime = (end - start) / 1000; // Convert ms to seconds
-    const operations = dataLength * 10000; // Total FMA operations
-    const gflops = (operations / elapsedTime) / 1e9; // GFLOPS
-
-    console.log(`Elapsed Time: ${elapsedTime.toFixed(3)} seconds`);
-    console.log(`GFLOPS: ${gflops.toFixed(2)}`);
-}
-
-measureGFLOPS();
+        measureGFLOPS();
+    </script>
+</body>
+</html>
 
