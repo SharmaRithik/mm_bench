@@ -7,41 +7,44 @@
 </head>
 <body>
     <h1>WebGPU GFLOPS Benchmark</h1>
+    <p>Check the console for results and also see the results below:</p>
+    <div id="results"></div>
+
     <script>
-        async function measureGFLOPS() {
+        async function measureMaxGFLOPS() {
             if (!navigator.gpu) {
                 console.error("WebGPU is not supported on this browser.");
+                document.getElementById("results").innerHTML = "<p>WebGPU is not supported on this browser.</p>";
                 return;
             }
-        
+
             const adapter = await navigator.gpu.requestAdapter();
             const device = await adapter.requestDevice();
-        
+
             const dataLength = 1 << 20; // Array length (1 million elements)
             const dataBuffer = device.createBuffer({
                 size: dataLength * Float32Array.BYTES_PER_ELEMENT,
                 usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
             });
-        
+
             const shaderModule = device.createShaderModule({
                 code: `
                 @group(0) @binding(0) var<storage, read_write> data: array<f32>;
-        
-                @compute @workgroup_size(64)
+
+                @compute @workgroup_size(128)
                 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
                     let index = id.x;
                     if (index >= arrayLength(&data)) { return; }
-        
+
                     var value = data[index];
-                    for (var i = 0u; i < 10000u; i = i + 1u) {
+                    for (var i = 0u; i < 1000000u; i = i + 1u) {
                         value = value * 1.01 + 0.1; // Fused Multiply-Add (FMA) operations
                     }
                     data[index] = value;
                 }
                 `,
             });
-        
-            // Create the bind group layout for the pipeline
+
             const bindGroupLayout = device.createBindGroupLayout({
                 entries: [
                     {
@@ -51,14 +54,12 @@
                     },
                 ],
             });
-        
-            // Create the compute pipeline
+
             const pipeline = device.createComputePipeline({
                 layout: device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
                 compute: { module: shaderModule, entryPoint: "main" },
             });
-        
-            // Create the bind group
+
             const bindGroup = device.createBindGroup({
                 layout: bindGroupLayout,
                 entries: [
@@ -68,33 +69,34 @@
                     },
                 ],
             });
-        
-            // Create and execute the compute pass
+
             const commandEncoder = device.createCommandEncoder();
             const passEncoder = commandEncoder.beginComputePass();
             passEncoder.setPipeline(pipeline);
             passEncoder.setBindGroup(0, bindGroup);
-        
-            const workgroupCount = Math.ceil(dataLength / 64); // 64 threads per workgroup
+
+            const workgroupCount = Math.ceil(dataLength / 128); // Total workgroups
             passEncoder.dispatchWorkgroups(workgroupCount);
             passEncoder.end();
-        
+
             const start = performance.now();
             device.queue.submit([commandEncoder.finish()]);
             await device.queue.onSubmittedWorkDone();
             const end = performance.now();
-        
+
             const elapsedTime = (end - start) / 1000; // Convert ms to seconds
-            const operations = dataLength * 10000; // Total FMA operations
+            const operations = dataLength * 1000000 * 2; // Total FMA operations (multiply + add)
             const gflops = (operations / elapsedTime) / 1e9; // GFLOPS
-        
+
             console.log(`Elapsed Time: ${elapsedTime.toFixed(3)} seconds`);
-            console.log(`GFLOPS: ${gflops.toFixed(2)}`);
-            document.body.innerHTML += `<p>Elapsed Time: ${elapsedTime.toFixed(3)} seconds</p>`;
-            document.body.innerHTML += `<p>GFLOPS: ${gflops.toFixed(2)}</p>`;
+            console.log(`Max GFLOPS: ${gflops.toFixed(2)}`);
+            document.getElementById("results").innerHTML = `
+                <p>Elapsed Time: ${elapsedTime.toFixed(3)} seconds</p>
+                <p>Max GFLOPS: ${gflops.toFixed(2)}</p>
+            `;
         }
-        
-        measureGFLOPS();
+
+        measureMaxGFLOPS();
     </script>
 </body>
 </html>
