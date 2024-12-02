@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>1D Tiling Matrix Multiplication Benchmark (Debug)</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .device-info {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            font-family: monospace;
+            white-space: pre-wrap;
+        }
+        .matrix-sizes {
+            margin: 20px 0;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+            gap: 10px;
+        }
+        .matrix-sizes label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f8f9fa;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        #status {
+            margin: 20px 0;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .warning {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .controls {
+            margin: 20px 0;
+        }
+        .matrix-controls {
+            margin: 15px 0;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        #debug {
+            font-family: monospace;
+            white-space: pre-wrap;
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 20px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>1D Tiling Matrix Multiplication Benchmark (Debug)</h1>
+        <div id="deviceInfo" class="device-info">Detecting device capabilities...</div>
+        
+        <div class="matrix-controls">
+            <h3>Matrix Sizes</h3>
+            <button onclick="selectAllSizes()">Select All</button>
+            <button onclick="deselectAllSizes()">Deselect All</button>
+            <button onclick="selectRecommendedSizes()">Select Recommended</button>
+            <div id="matrixSizes" class="matrix-sizes"></div>
+        </div>
+
+        <div class="controls">
+            <button id="runBenchmark">Run Benchmark</button>
+            <button id="downloadResults">Download Results</button>
+        </div>
+
+        <div id="status"></div>
+        <div id="debug"></div>
+        
+        <table id="resultsTable">
+            <thead>
+                <tr>
+                    <th>Matrix Size</th>
+                    <th>Time (ms)</th>
+                    <th>GFLOPS</th>
+                    <th>Memory (MB)</th>
+                    <th>Verified</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <script>
+        let maxWorkgroupSize = { x: 0, y: 0, z: 0, total: 0 };
+        let deviceName = "";
+        let adapter;
+        let device;
+        let benchmarkResults = [];
+        const TILE_SIZE = 16;
+
+        async function initWebGPU() {
+            if (!navigator.gpu) {
+                throw new Error("WebGPU not supported");
+            }
+            adapter = await navigator.gpu.requestAdapter();
+            if (!adapter) {
+                throw new Error("No appropriate GPUAdapter found");
+            }
+            device = await adapter.requestDevice();
+
+            maxWorkgroupSize = {
+                x: device.limits.maxComputeWorkgroupSizeX,
+                y: device.limits.maxComputeWorkgroupSizeY,
+                z: device.limits.maxComputeWorkgroupSizeZ,
+                total: device.limits.maxComputeWorkgroupInvocations
+            };
+
+            deviceName = "WebGPU Device";
+
+            updateDeviceInfo();
+            setupMatrixSizes();
+            return device;
+        }
+
+        function getOptimalWorkgroupSize() {
+            return { x: TILE_SIZE, y: TILE_SIZE };
+        }
+
+        function updateDeviceInfo() {
+            const deviceInfo = document.getElementById('deviceInfo');
+            const optimal = getOptimalWorkgroupSize();
+            deviceInfo.innerHTML = `Device Information:
+Max Workgroup Size (X): ${maxWorkgroupSize.x}
+Max Workgroup Size (Y): ${maxWorkgroupSize.y}
+Max Workgroup Size (Z): ${maxWorkgroupSize.z}
+Max Total Workgroup Size: ${maxWorkgroupSize.total}
+Tile Size: ${TILE_SIZE}x${TILE_SIZE}
+Selected Workgroup Size: ${optimal.x}x${optimal.y}`;
+        }
+
+        function setupMatrixSizes() {
+            const container = document.getElementById('matrixSizes');
+            container.innerHTML = '';
+            for (let i = 1; i <= 12; i++) {
+                const size = Math.pow(2, i);
+                const label = document.createElement('label');
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.value = size;
+                checkbox.checked = i >= 4 && i <= 8;
+                label.appendChild(checkbox);
+                label.appendChild(document.createTextNode(`${size}x${size}`));
+                container.appendChild(label);
+            }
+        }
+
+        function selectAllSizes() {
+            document.querySelectorAll('#matrixSizes input[type="checkbox"]')
+                .forEach(cb => cb.checked = true);
+        }
+
+        function deselectAllSizes() {
+            document.querySelectorAll('#matrixSizes input[type="checkbox"]')
+                .forEach(cb => cb.checked = false);
+        }
+
+        function selectRecommendedSizes() {
+            document.querySelectorAll('#matrixSizes input[type="checkbox"]')
+                .forEach(cb => {
+                    const size = parseInt(cb.value);
+                    cb.checked = size >= 16 && size <= 256;
+                });
+        }
+
+        function createBuffer(data, usage) {
+            const buffer = device.createBuffer({
+                size: data.byteLength,
+                usage: usage,
+                mappedAtCreation: true,
+            });
+            new Float32Array(buffer.getMappedRange()).set(data);
+            buffer.unmap();
+            return buffer;
+        }
+
+        function getTiledWGSL() {
+            return `
+                    @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+                    @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+                    @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+                    @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+                    @group(0) @binding(4) var<storage, read_write> debugBuffer : array<f32>;
+        
+                    struct Uniforms {
+                        N : u32,
+                        alpha : f32,
+                        beta : f32,
+                    }
+        
+                    var<workgroup> tileA : array<f32, 16 * 16>;
+                    var<workgroup> tileB : array<f32, 16 * 16>;
+        
+                    @compute @workgroup_size(16, 16)
+                    fn main(
+                        @builtin(global_invocation_id) global_id : vec3<u32>,
+                        @builtin(local_invocation_id) local_id : vec3<u32>,
+                        @builtin(workgroup_id) group_id : vec3<u32>
+                    ) {
+                        let N = uniforms.N;
+                        let alpha = uniforms.alpha;
+                        let beta = uniforms.beta;
+        
+                        let row = global_id.y;
+                        let col = global_id.x;
+                        let localRow = local_id.y;
+                        let localCol = local_id.x;
+        
+                        var acc : f32 = 0.0;
+        
+                        for (var t = 0u; t < (N + 15u) / 16u; t = t + 1u) {
+                            // Load tileA into shared memory
+                            let aIndex = row * N + (t * 16u + localCol);
+                            if (aIndex < N * N && (t * 16u + localCol) < N) {
+                                tileA[localRow * 16u + localCol] = matrixA[aIndex];
+                            } else {
+                                tileA[localRow * 16u + localCol] = 0.0;
+                            }
+        
+                            // Load tileB into shared memory
+                            let bIndex = (t * 16u + localRow) * N + col;
+                            if (bIndex < N * N && (t * 16u + localRow) < N) {
+                                tileB[localRow * 16u + localCol] = matrixB[bIndex];
+                            } else {
+                                tileB[localRow * 16u + localCol] = 0.0;
+                            }
+        
+                            // Synchronize workgroup to ensure all threads have loaded data
+                            workgroupBarrier();
+        
+                            // Compute partial dot product for the tile
+                            for (var k = 0u; k < 16u; k = k + 1u) {
+                                acc = acc + tileA[localRow * 16u + k] * tileB[k * 16u + localCol];
+                            }
+        
+                            // Synchronize workgroup before loading the next tile
+                            workgroupBarrier();
+                        }
+        
+                        // Write the result back to matrixC if within bounds
+                        let cIndex = row * N + col;
+                        if (row < N && col < N && cIndex < N * N) {
+                            matrixC[cIndex] = alpha * acc + beta * matrixC[cIndex];
+                        }
+        
+                        // Debug buffer logging (optional)
+                        if (localRow == 0u && localCol == 0u && group_id.x == 0u && group_id.y == 0u) {
+                            debugBuffer[0] = acc;
+                        }
+                    }
+                `;
+        }
+
+        function verifyMatrixMultiplication(matrixA, matrixB, resultMatrix, debugInfo, N, alpha, beta) {
+            let errors = [];
+            let maxError = 0;
+            let totalError = 0;
+            let errorCount = 0;
+
+            for (let check = 0; check < Math.min(25, N * N); check++) {
+                const row = Math.floor(Math.random() * N);
+                const col = Math.floor(Math.random() * N);
+                const idx = row * N + col;
+                
+                let expected = 0;
+                for (let i = 0; i < N; i++) {
+                    expected += matrixA[row * N + i] * matrixB[i * N + col];
+                }
+                expected = alpha * expected + beta * 0;
+                
+                const actual = resultMatrix[idx];
+                const error = Math.abs(expected - actual);
+                const relativeError = error / Math.abs(expected);
+
+                if (relativeError > 1e-5) {
+                    const debugIdx = idx * 4;
+                    errors.push({
+                        row,
+                        col,
+                        expected,
+                        actual,
+                        relativeError,
+                        debug: {
+                            computedRow: debugInfo[debugIdx],
+                            computedCol: debugInfo[debugIdx + 1],
+                            tileStart: debugInfo[debugIdx + 2],
+                            firstTileSum: debugInfo[debugIdx + 3]
+                        }
+                    });
+                    maxError = Math.max(maxError, relativeError);
+                    totalError += relativeError;
+                    errorCount++;
+                }
+            }
+
+            if (errors.length > 0) {
+                console.error('Verification failed with the following errors:');
+                console.error('Number of errors:', errors.length);
+                console.error('Max relative error:', maxError);
+                console.error('Average relative error:', totalError / errorCount);
+                console.error('Detailed errors:', errors);
+                
+                // Show debug information in the UI
+                const debugElement = document.getElementById('debug');
+                debugElement.style.display = 'block';
+                debugElement.innerHTML = `Verification Errors:
+Number of errors: ${errors.length}
+Max relative error: ${maxError}
+Average relative error: ${totalError / errorCount}
+
+Detailed errors:
+${JSON.stringify(errors, null, 2)}`;
+                
+                return false;
+            }
+
+            return true;
+        }
+
+        async function runBenchmark(N) {
+            const workgroupSize = getOptimalWorkgroupSize();
+            const matrixSize = N * N;
+            const matrixA = new Float32Array(matrixSize);
+            const matrixB = new Float32Array(matrixSize);
+            const resultMatrix = new Float32Array(matrixSize).fill(0);
+
+            for (let i = 0; i < matrixSize; i++) {
+                matrixA[i] = Math.random();
+                matrixB[i] = Math.random();
+            }
+
+            const bufferA = createBuffer(matrixA, GPUBufferUsage.STORAGE);
+            const bufferB = createBuffer(matrixB, GPUBufferUsage.STORAGE);
+            const bufferC = createBuffer(resultMatrix, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
+
+            const debugBuffer = device.createBuffer({
+                size: N * N * 4 * 4, // 4 debug values per element
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+            });
+
+            const uniformBuffer = device.createBuffer({size: 16,
+                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+            });
+
+            const uniformData = new ArrayBuffer(16);
+            new Uint32Array(uniformData, 0, 1)[0] = N;
+            new Float32Array(uniformData, 4, 1)[0] = 1.0;
+            new Float32Array(uniformData, 8, 1)[0] = 0.0;
+            device.queue.writeBuffer(uniformBuffer, 0, uniformData);
+
+            const bindGroupLayout = device.createBindGroupLayout({
+                entries: [
+                    { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+                    { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+                    { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+                    { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+                    { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+                ],
+            });
+
+            const bindGroup = device.createBindGroup({
+                layout: bindGroupLayout,
+                entries: [
+                    { binding: 0, resource: { buffer: bufferA } },
+                    { binding: 1, resource: { buffer: bufferB } },
+                    { binding: 2, resource: { buffer: bufferC } },
+                    { binding: 3, resource: { buffer: uniformBuffer } },
+                    { binding: 4, resource: { buffer: debugBuffer } },
+                ],
+            });
+
+            const pipeline = device.createComputePipeline({
+                layout: device.createPipelineLayout({
+                    bindGroupLayouts: [bindGroupLayout],
+                }),
+                compute: {
+                    module: device.createShaderModule({
+                        code: getTiledWGSL(),
+                    }),
+                    entryPoint: "main",
+                },
+            });
+
+            const commandEncoder = device.createCommandEncoder();
+            const passEncoder = commandEncoder.beginComputePass();
+            passEncoder.setPipeline(pipeline);
+            passEncoder.setBindGroup(0, bindGroup);
+            passEncoder.dispatchWorkgroups(
+                Math.ceil(N / workgroupSize.x),
+                Math.ceil(N / workgroupSize.y)
+            );
+            passEncoder.end();
+
+            const startTime = performance.now();
+            device.queue.submit([commandEncoder.finish()]);
+            await device.queue.onSubmittedWorkDone();
+            const endTime = performance.now();
+
+            const resultBuffer = device.createBuffer({
+                size: bufferC.size,
+                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+            });
+
+            const debugResultBuffer = device.createBuffer({
+                size: debugBuffer.size,
+                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+            });
+
+            const copyEncoder = device.createCommandEncoder();
+            copyEncoder.copyBufferToBuffer(bufferC, 0, resultBuffer, 0, bufferC.size);
+            copyEncoder.copyBufferToBuffer(debugBuffer, 0, debugResultBuffer, 0, debugBuffer.size);
+            device.queue.submit([copyEncoder.finish()]);
+
+            await resultBuffer.mapAsync(GPUMapMode.READ);
+            await debugResultBuffer.mapAsync(GPUMapMode.READ);
+            const resultArray = new Float32Array(resultBuffer.getMappedRange());
+            const debugArray = new Float32Array(debugResultBuffer.getMappedRange());
+            
+            const verified = verifyMatrixMultiplication(matrixA, matrixB, resultArray, debugArray, N, 1.0, 0.0);
+            
+            resultBuffer.unmap();
+            debugResultBuffer.unmap();
+
+            const time = endTime - startTime;
+            const gflops = (2 * N * N * N) / (time * 1e6);
+            const memoryMB = (matrixSize * 3 * 4) / (1024 * 1024);
+
+            // Cleanup
+            bufferA.destroy();
+            bufferB.destroy();
+            bufferC.destroy();
+            debugBuffer.destroy();
+            resultBuffer.destroy();
+            debugResultBuffer.destroy();
+            uniformBuffer.destroy();
+
+            return {
+                time,
+                gflops,
+                memoryMB,
+                verified
+            };
+        }
+
+        function downloadCSV(results) {
+            const csv = [
+                'Matrix Size,Time (ms),GFLOPS,Memory (MB),Verified'
+            ];
+
+            results.forEach(result => {
+                csv.push(`${result.size}x${result.size},${result.time.toFixed(2)},${result.gflops.toFixed(2)},${result.memoryMB.toFixed(2)},${result.verified}`);
+            });
+
+            const blob = new Blob([csv.join('\n')], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.setAttribute('href', url);
+            a.setAttribute('download', 'tiled_matmul_results.csv');
+            a.click();
+            window.URL.revokeObjectURL(url);
+        }
+
+        async function main() {
+            const status = document.getElementById('status');
+            const resultsTable = document.getElementById('resultsTable').getElementsByTagName('tbody')[0];
+            const runButton = document.getElementById('runBenchmark');
+            const downloadButton = document.getElementById('downloadResults');
+            const debugElement = document.getElementById('debug');
+            
+            try {
+                status.className = '';
+                status.textContent = 'Initializing WebGPU...';
+                debugElement.style.display = 'none';
+                
+                await initWebGPU();
+                
+                status.className = 'success';
+                status.textContent = 'WebGPU initialized successfully. Ready to run benchmark.';
+                
+                runButton.onclick = async () => {
+                    try {
+                        const selectedSizes = Array.from(document.querySelectorAll('#matrixSizes input:checked'))
+                            .map(cb => parseInt(cb.value))
+                            .sort((a, b) => a - b);
+                            
+                        if (selectedSizes.length === 0) {
+                            status.className = 'warning';
+                            status.textContent = 'Please select at least one matrix size.';
+                            return;
+                        }
+                        
+                        runButton.disabled = true;
+                        downloadButton.disabled = true;
+                        resultsTable.innerHTML = '';
+                        benchmarkResults = [];
+                        debugElement.style.display = 'none';
+                        
+                        for (const size of selectedSizes) {
+                            status.className = 'success';
+                            status.textContent = `Running benchmark for ${size}x${size} matrix...`;
+                            
+                            // Warm-up run
+                            await runBenchmark(size);
+                            
+                            // Actual benchmark run
+                            const result = await runBenchmark(size);
+                            
+                            benchmarkResults.push({
+                                size,
+                                ...result
+                            });
+                            
+                            const row = resultsTable.insertRow();
+                            row.innerHTML = `
+                                <td>${size}x${size}</td>
+                                <td>${result.time.toFixed(2)}</td>
+                                <td>${result.gflops.toFixed(2)}</td>
+                                <td>${result.memoryMB.toFixed(2)}</td>
+                                <td>${result.verified ? '✓' : '✗'}</td>
+                            `;
+                        }
+                        
+                        status.className = 'success';
+                        status.textContent = 'Benchmark completed successfully!';
+                        runButton.disabled = false;
+                        downloadButton.disabled = false;
+                        
+                    } catch (error) {
+                        status.className = 'error';
+                        status.textContent = 'Error during benchmark: ' + error.message;
+                        console.error('Benchmark error:', error);
+                        runButton.disabled = false;
+                        downloadButton.disabled = false;
+                    }
+                };
+                
+                downloadButton.onclick = () => {
+                    if (benchmarkResults.length > 0) {
+                        downloadCSV(benchmarkResults);
+                    } else {
+                        status.className = 'warning';
+                        status.textContent = 'No results to download. Run the benchmark first.';
+                    }
+                };
+                
+            } catch (error) {
+                status.className = 'error';
+                status.textContent = 'Failed to initialize WebGPU: ' + error.message;
+                console.error('Initialization error:', error);
+                if (runButton) runButton.disabled = true;
+                if (downloadButton) downloadButton.disabled = true;
+            }
+        }
+
+        // Start the application
+        window.addEventListener('load', main);
+    </script>
+</body>
+</html>
