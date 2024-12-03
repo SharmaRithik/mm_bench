@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPU Detection</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .info-box {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>GPU Information</h1>
+    <div id="gpuInfo" class="info-box"></div>
+    <div id="webglInfo" class="info-box"></div>
+
+    <script>
+        function getGPUInfo() {
+            const gpuInfo = document.getElementById('gpuInfo');
+            const webglInfo = document.getElementById('webglInfo');
+            
+            // Try to get GPU info using getParameter
+            try {
+                // Create canvas and get WebGL context
+                const canvas = document.createElement('canvas');
+                const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+                
+                if (gl) {
+                    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                    
+                    if (debugInfo) {
+                        const vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+                        const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+                        
+                        gpuInfo.innerHTML = `
+                            <h2>GPU Details:</h2>
+                            <p><strong>Vendor:</strong> ${vendor}</p>
+                            <p><strong>Renderer:</strong> ${renderer}</p>
+                        `;
+                        
+                        // Get additional WebGL capabilities
+                        const webglCapabilities = {
+                            'WebGL Version': gl.getParameter(gl.VERSION),
+                            'Shading Language Version': gl.getParameter(gl.SHADING_LANGUAGE_VERSION),
+                            'Vendor': gl.getParameter(gl.VENDOR),
+                            'Max Texture Size': gl.getParameter(gl.MAX_TEXTURE_SIZE),
+                            'Max Viewport Dimensions': gl.getParameter(gl.MAX_VIEWPORT_DIMS),
+                            'Max Vertex Attributes': gl.getParameter(gl.MAX_VERTEX_ATTRIBS),
+                            'Max Vertex Uniforms': gl.getParameter(gl.MAX_VERTEX_UNIFORM_VECTORS),
+                            'Max Varying Vectors': gl.getParameter(gl.MAX_VARYING_VECTORS),
+                            'Max Fragment Uniforms': gl.getParameter(gl.MAX_FRAGMENT_UNIFORM_VECTORS),
+                            'Max Texture Image Units': gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS)
+                        };
+                        
+                        let webglCapabilitiesHtml = '<h2>WebGL Capabilities:</h2>';
+                        for (const [key, value] of Object.entries(webglCapabilities)) {
+                            webglCapabilitiesHtml += `<p><strong>${key}:</strong> ${value}</p>`;
+                        }
+                        webglInfo.innerHTML = webglCapabilitiesHtml;
+                    } else {
+                        gpuInfo.innerHTML = '<p>Unable to get detailed GPU information. WEBGL_debug_renderer_info not available.</p>';
+                    }
+                } else {
+                    gpuInfo.innerHTML = '<p>WebGL is not supported in this browser.</p>';
+                }
+            } catch (e) {
+                gpuInfo.innerHTML = `<p>Error getting GPU information: ${e.message}</p>`;
+            }
+
+            // Try to get GPU info using navigator.gpu (WebGPU API)
+            if (navigator.gpu) {
+                navigator.gpu.requestAdapter().then(adapter => {
+                    if (adapter) {
+                        const info = {
+                            name: adapter.name,
+                            description: adapter.description,
+                            isIntegrated: adapter.isIntegrated
+                        };
+                        gpuInfo.innerHTML += `
+                            <h2>WebGPU Information:</h2>
+                            <p><strong>Name:</strong> ${info.name}</p>
+                            <p><strong>Description:</strong> ${info.description}</p>
+                            <p><strong>Integrated GPU:</strong> ${info.isIntegrated}</p>
+                        `;
+                    }
+                }).catch(err => {
+                    console.error('WebGPU error:', err);
+                });
+            }
+        }
+
+        // Run GPU detection when page loads
+        window.onload = getGPUInfo;
+    </script>
+</body>
+</html>
