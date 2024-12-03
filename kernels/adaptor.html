@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multiple GPU Detection</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .info-box {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Available GPUs Information</h1>
+    <div id="gpuList" class="info-box"></div>
+    <div id="webglInfo" class="info-box"></div>
+
+    <script>
+        async function detectGPUs() {
+            const gpuList = document.getElementById('gpuList');
+            const webglInfo = document.getElementById('webglInfo');
+            let gpusFound = new Set();
+
+            // 1. Try WebGPU API for multiple adapters
+            if (navigator.gpu) {
+                try {
+                    gpuList.innerHTML += '<h2>WebGPU Detected GPUs:</h2>';
+                    
+                    // Try to get default adapter
+                    const adapter = await navigator.gpu.requestAdapter();
+                    if (adapter) {
+                        const info = {
+                            name: adapter.name,
+                            description: adapter.description,
+                            isIntegrated: adapter.isIntegrated
+                        };
+                        gpusFound.add(info.name);
+                        gpuList.innerHTML += `
+                            <p><strong>Primary GPU:</strong></p>
+                            <p>Name: ${info.name}</p>
+                            <p>Description: ${info.description}</p>
+                            <p>Integrated: ${info.isIntegrated}</p>
+                        `;
+                    }
+
+                    // Try to get high-performance adapter
+                    const highPerfAdapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+                    if (highPerfAdapter && highPerfAdapter.name && !gpusFound.has(highPerfAdapter.name)) {
+                        gpusFound.add(highPerfAdapter.name);
+                        gpuList.innerHTML += `
+                            <p><strong>High Performance GPU:</strong></p>
+                            <p>Name: ${highPerfAdapter.name}</p>
+                            <p>Description: ${highPerfAdapter.description}</p>
+                            <p>Integrated: ${highPerfAdapter.isIntegrated}</p>
+                        `;
+                    }
+
+                    // Try to get low-power adapter
+                    const lowPowerAdapter = await navigator.gpu.requestAdapter({ powerPreference: 'low-power' });
+                    if (lowPowerAdapter && lowPowerAdapter.name && !gpusFound.has(lowPowerAdapter.name)) {
+                        gpusFound.add(lowPowerAdapter.name);
+                        gpuList.innerHTML += `
+                            <p><strong>Low Power GPU:</strong></p>
+                            <p>Name: ${lowPowerAdapter.name}</p>
+                            <p>Description: ${lowPowerAdapter.description}</p>
+                            <p>Integrated: ${lowPowerAdapter.isIntegrated}</p>
+                        `;
+                    }
+                } catch (e) {
+                    console.error('WebGPU error:', e);
+                }
+            }
+
+            // 2. Try WebGL with different power preferences
+            const contextTypes = ['webgl2', 'webgl', 'experimental-webgl'];
+            const powerPreferences = ['default', 'high-performance', 'low-power'];
+
+            gpuList.innerHTML += '<h2>WebGL Detected GPUs:</h2>';
+
+            for (const contextType of contextTypes) {
+                for (const powerPreference of powerPreferences) {
+                    const canvas = document.createElement('canvas');
+                    try {
+                        const gl = canvas.getContext(contextType, { powerPreference });
+                        if (gl) {
+                            const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                            if (debugInfo) {
+                                const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+                                const vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+                                
+                                if (!gpusFound.has(renderer)) {
+                                    gpusFound.add(renderer);
+                                    gpuList.innerHTML += `
+                                        <p><strong>${powerPreference} GPU (${contextType}):</strong></p>
+                                        <p>Renderer: ${renderer}</p>
+                                        <p>Vendor: ${vendor}</p>
+                                    `;
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        console.error(`Error with ${contextType} and ${powerPreference}:`, e);
+                    }
+                }
+            }
+
+            // 3. Try to detect using getDisplayMedia (screen capture) capabilities
+            if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+                try {
+                    const stream = await navigator.mediaDevices.getDisplayMedia({
+                        video: {
+                            displaySurface: 'monitor',
+                            frameRate: 60
+                        }
+                    });
+                    
+                    const tracks = stream.getVideoTracks();
+                    if (tracks.length > 0) {
+                        const settings = tracks[0].getSettings();
+                        if (settings.deviceId) {
+                            gpuList.innerHTML += `
+                                <h2>Display Capture GPU Information:</h2>
+                                <p>Display Device ID: ${settings.deviceId}</p>
+                                <p>Max Framerate: ${settings.frameRate}</p>
+                            `;
+                        }
+                    }
+                    
+                    // Don't forget to stop all tracks
+                    stream.getTracks().forEach(track => track.stop());
+                } catch (e) {
+                    console.error('Display media error:', e);
+                }
+            }
+
+            // 4. Performance API for GPU timing
+            if (performance.getEntriesByType) {
+                const gpuTiming = performance.getEntriesByType('gpu');
+                if (gpuTiming && gpuTiming.length > 0) {
+                    gpuList.innerHTML += `
+                        <h2>GPU Performance Information:</h2>
+                        <p>GPU Timing Entries: ${gpuTiming.length}</p>
+                    `;
+                }
+            }
+
+            if (gpusFound.size === 0) {
+                gpuList.innerHTML += '<p>No GPUs could be detected using available APIs.</p>';
+            }
+        }
+
+        // Run GPU detection when page loads
+        window.onload = detectGPUs;
+    </script>
+</body>
+</html>
