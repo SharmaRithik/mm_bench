@@ -268,7 +268,7 @@
 
         function get1DTilingWGSL(workgroupSize, tileSize) {
             return `
-                @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+    	        @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
                 @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
                 @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
                 @group(0) @binding(3) var<uniform> uniforms : Uniforms;
@@ -284,6 +284,7 @@
                 const TILE_SIZE = ${tileSize}u;
                 
                 var<workgroup> tileA: array<f32, TILE_SIZE * THREADS_Y>;
+                var<workgroup> tileB: array<f32, TILE_SIZE * THREADS_X>;
                 
                 @compute @workgroup_size(THREADS_X, THREADS_Y)
                 fn main(
@@ -294,38 +295,49 @@
                     let N = uniforms.N;
                     let row = global_id.y;
                     let col = global_id.x;
-                    
+                
                     var sum: f32 = 0.0;
-                    
+                
                     let tileRowOffset = local_id.y * TILE_SIZE;
-                    
+                    let tileColOffset = local_id.x * TILE_SIZE;
+                
                     for (var t: u32 = 0u; t < N; t += TILE_SIZE) {
                         if (local_id.x < TILE_SIZE) {
                             let tileIndex = t + local_id.x;
                             let tilePos = tileRowOffset + local_id.x;
-                            
-                            // Initialize to 0 for out-of-bounds
+                
                             var aVal: f32 = 0.0;
                             if (row < N && tileIndex < N) {
                                 aVal = matrixA[row * N + tileIndex];
                             }
                             tileA[tilePos] = aVal;
                         }
-                        
+                
+                        if (local_id.y < TILE_SIZE) {
+                            let tileIndex = t + local_id.y;
+                            let tilePos = tileColOffset + local_id.y;
+                
+                            var bVal: f32 = 0.0;
+                            if (col < N && tileIndex < N) {
+                                bVal = matrixB[tileIndex * N + col];
+                            }
+                            tileB[tilePos] = bVal;
+                        }
+                
                         workgroupBarrier();
-                        
+                
                         if (row < N && col < N) {
                             let tileLimit = min(TILE_SIZE, N - t);
                             for (var k: u32 = 0u; k < tileLimit; k++) {
                                 let aVal = tileA[tileRowOffset + k];
-                                let bVal = matrixB[(t + k) * N + col];
+                                let bVal = tileB[tileColOffset + k];
                                 sum += aVal * bVal;
                             }
                         }
-                        
+                
                         workgroupBarrier();
                     }
-                    
+                
                     if (row < N && col < N) {
                         let outIndex = row * N + col;
                         let prevValue = matrixC[outIndex];
