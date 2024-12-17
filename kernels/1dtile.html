@@ -267,81 +267,83 @@
         }
 
         function get1DTilingWGSL(workgroupSize, tileSize) {
-            return `
-    	        @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
-                @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
-                @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
-                @group(0) @binding(3) var<uniform> uniforms : Uniforms;
-                
+		return `
                 struct Uniforms {
-                    N : u32,
-                    alpha : f32,
-                    beta : f32,
-                }
-                
+                    N: u32,       // Matrix dimension
+                    alpha: f32,   // Alpha scalar
+                    beta: f32,    // Beta scalar
+                };
+            
+                @group(0) @binding(0) var<storage, read> matrixA: array<f32>;
+                @group(0) @binding(1) var<storage, read> matrixB: array<f32>;
+                @group(0) @binding(2) var<storage, read_write> matrixC: array<f32>;
+                @group(0) @binding(3) var<uniform> uniforms: Uniforms;
+            
                 const THREADS_X = ${workgroupSize.x}u;
                 const THREADS_Y = ${workgroupSize.y}u;
                 const TILE_SIZE = ${tileSize}u;
-                
-                var<workgroup> tileA: array<f32, TILE_SIZE * THREADS_Y>;
-                var<workgroup> tileB: array<f32, TILE_SIZE * THREADS_X>;
-                
-                @compute @workgroup_size(THREADS_X, THREADS_Y)
+                const ELEMENTS_PER_THREAD = (TILE_SIZE + THREADS_X - 1u) / THREADS_X;
+            
+                var<workgroup> As: array<f32, ${workgroupSize.y * tileSize}>;
+                var<workgroup> Bs: array<f32, ${tileSize * workgroupSize.x}>;
+            
+                @compute @workgroup_size(${workgroupSize.x}, ${workgroupSize.y})
                 fn main(
                     @builtin(global_invocation_id) global_id: vec3<u32>,
                     @builtin(local_invocation_id) local_id: vec3<u32>,
                     @builtin(workgroup_id) workgroup_id: vec3<u32>
                 ) {
                     let N = uniforms.N;
-                    let row = global_id.y;
-                    let col = global_id.x;
-                
-                    var sum: f32 = 0.0;
-                
-                    let tileRowOffset = local_id.y * TILE_SIZE;
-                    let tileColOffset = local_id.x * TILE_SIZE;
-                
-                    for (var t: u32 = 0u; t < N; t += TILE_SIZE) {
-                        if (local_id.x < TILE_SIZE) {
-                            let tileIndex = t + local_id.x;
-                            let tilePos = tileRowOffset + local_id.x;
-                
-                            var aVal: f32 = 0.0;
-                            if (row < N && tileIndex < N) {
-                                aVal = matrixA[row * N + tileIndex];
+            
+                    let threadCol = local_id.x;
+                    let threadRow = local_id.y;
+                    let globalCol = global_id.x;
+                    let globalRow = global_id.y;
+            
+                    var acc: f32 = 0.0;
+            
+                    for (var t = 0u; t < N; t = t + TILE_SIZE) {
+                        // Sequential loading for matrix A
+                        for (var i = 0u; i < ELEMENTS_PER_THREAD; i = i + 1u) {
+                            let loadCol = threadCol + i * THREADS_X;
+                            if (loadCol < TILE_SIZE && globalRow < N && t + loadCol < N) {
+                                let aIndex = globalRow * N + (t + loadCol);
+                                let asIndex = threadRow * TILE_SIZE + loadCol;
+                                As[asIndex] = matrixA[aIndex];
                             }
-                            tileA[tilePos] = aVal;
                         }
-                
-                        if (local_id.y < TILE_SIZE) {
-                            let tileIndex = t + local_id.y;
-                            let tilePos = tileColOffset + local_id.y;
-                
-                            var bVal: f32 = 0.0;
-                            if (col < N && tileIndex < N) {
-                                bVal = matrixB[tileIndex * N + col];
+            
+                        // Sequential loading for matrix B
+                        for (var i = 0u; i < ELEMENTS_PER_THREAD; i = i + 1u) {
+                            let loadRow = threadRow + i * THREADS_Y;
+                            if (loadRow < TILE_SIZE && globalCol < N && t + loadRow < N) {
+                                let bIndex = (t + loadRow) * N + globalCol;
+                                let bsIndex = loadRow * THREADS_X + threadCol;
+                                Bs[bsIndex] = matrixB[bIndex];
                             }
-                            tileB[tilePos] = bVal;
                         }
-                
+            
                         workgroupBarrier();
-                
-                        if (row < N && col < N) {
-                            let tileLimit = min(TILE_SIZE, N - t);
-                            for (var k: u32 = 0u; k < tileLimit; k++) {
-                                let aVal = tileA[tileRowOffset + k];
-                                let bVal = tileB[tileColOffset + k];
-                                sum += aVal * bVal;
+            
+                        if (globalRow < N && globalCol < N) {
+                            // Strict sequential processing with bounds checking
+                            for (var k = 0u; k < TILE_SIZE && (t + k) < N; k = k + 1u) {
+                                let aVal = As[threadRow * TILE_SIZE + k];
+                                let bVal = Bs[k * THREADS_X + threadCol];
+                                let product = aVal * bVal;
+                                acc = acc + product;
                             }
                         }
-                
+            
                         workgroupBarrier();
                     }
-                
-                    if (row < N && col < N) {
-                        let outIndex = row * N + col;
-                        let prevValue = matrixC[outIndex];
-                        matrixC[outIndex] = uniforms.alpha * sum + uniforms.beta * prevValue;
+            
+                    if (globalRow < N && globalCol < N) {
+                        let outIndex = globalRow * N + globalCol;
+                        let alpha = uniforms.alpha;
+                        let beta = uniforms.beta;
+                        let currentC = matrixC[outIndex];
+                        matrixC[outIndex] = alpha * acc + beta * currentC;
                     }
                 }
             `;
