@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>1D Tiling Matrix Multiplication Benchmark</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .device-info {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            font-family: monospace;
+            white-space: pre-wrap;
+        }
+        .matrix-sizes, .workgroup-sizes, .tile-sizes {
+            margin: 20px 0;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+            gap: 10px;
+            max-height: 300px;
+            overflow-y: auto;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .matrix-sizes label, .workgroup-sizes label, .tile-sizes label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            padding: 2px 5px;
+            font-size: 14px;
+        }
+        .matrix-sizes label:hover, .workgroup-sizes label:hover, .tile-sizes label:hover {
+            background-color: #f0f0f0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+            font-size: 14px;
+        }
+        th {
+            background-color: #f8f9fa;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        .table-title {
+            font-size: 18px;
+            font-weight: bold;
+            margin: 30px 0 10px 0;
+            padding-bottom: 5px;
+            border-bottom: 2px solid #007bff;
+        }
+        #status {
+            margin: 20px 0;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .success { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        .warning { background-color: #fff3cd; color: #856404; }
+        button {
+            padding: 8px 16px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 8px;
+            margin-bottom: 5px;
+            font-size: 14px;
+        }
+        button:hover { background-color: #0056b3; }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .controls { margin: 20px 0; }
+        .matrix-controls {
+            margin: 15px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .iteration-control {
+            margin: 15px 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .iteration-control input {
+            width: 80px;
+            padding: 5px;
+            font-size: 14px;
+        }
+        .section-header {
+            margin-top: 20px;
+            margin-bottom: 10px;
+            font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .section-header .button-group {
+            display: flex;
+            gap: 8px;
+        }
+        .results-container {
+            max-height: 500px;
+            overflow-y: auto;
+            margin-top: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .best-performers-container {
+            margin-top: 30px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            background-color: #f8f9fa;
+        }
+        .highlighted { background-color: #e3f2fd !important; }
+        .info-text {
+            font-size: 12px;
+            color: #666;
+            margin-top: 4px;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>1D Tiling Matrix Multiplication Benchmark</h1>
+        <div id="deviceInfo" class="device-info">Detecting device capabilities...</div>
+        
+        <div class="matrix-controls">
+            <div class="section-header">
+                <span>Matrix Sizes</span>
+                <div class="button-group">
+                    <button onclick="selectAllSizes()">Select All</button>
+                    <button onclick="deselectAllSizes()">Deselect All</button>
+                    <button onclick="selectRecommendedSizes()">Select Recommended</button>
+                </div>
+            </div>
+            <div id="matrixSizes" class="matrix-sizes"></div>
+            <div class="info-text">Matrix dimensions (NxN)</div>
+            
+            <div class="section-header">
+                <span>Workgroup Sizes</span>
+                <div class="button-group">
+                    <button onclick="selectAllWorkgroups()">Select All</button>
+                    <button onclick="deselectAllWorkgroups()">Deselect All</button>
+                    <button onclick="selectRecommendedWorkgroups()">Select Recommended</button>
+                </div>
+            </div>
+            <div id="workgroupSizes" class="workgroup-sizes"></div>
+            <div class="info-text">Workgroup dimensions (XxY)</div>
+
+            <div class="section-header">
+                <span>Tile Sizes</span>
+                <div class="button-group">
+                    <button onclick="selectAllTileSizes()">Select All</button>
+                    <button onclick="deselectAllTileSizes()">Deselect All</button>
+                    <button onclick="selectRecommendedTileSizes()">Select Recommended</button>
+                </div>
+            </div>
+            <div id="tileSizes" class="tile-sizes"></div>
+            <div class="info-text">1D tile dimensions (1xSize)</div>
+
+            <div class="iteration-control">
+                <label for="iterations">Number of iterations:</label>
+                <input type="number" id="iterations" value="3" min="1" max="10">
+            </div>
+        </div>
+
+        <div class="controls">
+            <button id="runBenchmark">Run Benchmark</button>
+            <button id="downloadResults">Download Results</button>
+            <button id="clearResults">Clear Results</button>
+        </div>
+
+        <div id="status"></div>
+        
+        <div class="results-container">
+            <div class="table-title">All Results</div>
+            <table id="resultsTable">
+                <thead>
+                    <tr>
+                        <th>Matrix Size</th>
+                        <th>Tile Size</th>
+                        <th>Workgroup</th>
+                        <th>Avg Time (ms)</th>
+                        <th>Min Time (ms)</th>
+                        <th>Max Time (ms)</th>
+                        <th>Avg GFLOPS</th>
+                        <th>Memory (MB)</th>
+                        <th>Verified</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+
+        <div class="best-performers-container">
+            <div class="table-title">Best Performers</div>
+            <table id="bestPerformersTable">
+                <thead>
+                    <tr>
+                        <th>Matrix Size</th>
+                        <th>Best Configuration</th>
+                        <th>Tile Size</th>
+                        <th>Iterations</th>
+                        <th>Avg Time (ms)</th>
+                        <th>Min Time (ms)</th>
+                        <th>Max Time (ms)</th>
+                        <th>Avg GFLOPS</th>
+                        <th>Memory (MB)</th>
+                        <th>Verified</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        let maxWorkgroupSize = { x: 0, y: 0, z: 0, total: 0 };
+        let deviceName = "";
+        let adapter;
+        let device;
+        let benchmarkResults = [];
+        let bestPerformers = new Map();
+
+        // Generate all possible workgroup configurations
+        const workgroupConfigs = [];
+        const possibleX = [1, 2, 4, 8, 16, 32, 64, 128, 256];
+        const possibleY = [1, 2, 4, 8, 16, 32, 64, 128, 256];
+
+        for (const x of possibleX) {
+            for (const y of possibleY) {
+                if (x * y <= 256) { // WebGPU workgroup size limit
+                    workgroupConfigs.push({ x, y });
+                }
+            }
+        }
+
+        function get1DTilingWGSL(workgroupSize, tileSize) {
+		return `
+                struct Uniforms {
+                    N: u32,       // Matrix dimension
+                    alpha: f32,   // Alpha scalar
+                    beta: f32,    // Beta scalar
+                };
+            
+                @group(0) @binding(0) var<storage, read> matrixA: array<f32>;
+                @group(0) @binding(1) var<storage, read> matrixB: array<f32>;
+                @group(0) @binding(2) var<storage, read_write> matrixC: array<f32>;
+                @group(0) @binding(3) var<uniform> uniforms: Uniforms;
+            
+                const THREADS_X = ${workgroupSize.x}u;
+                const THREADS_Y = ${workgroupSize.y}u;
+                const TILE_SIZE = ${tileSize}u;
+                const ELEMENTS_PER_THREAD = (TILE_SIZE + THREADS_X - 1u) / THREADS_X;
+            
+                var<workgroup> As: array<f32, ${workgroupSize.y * tileSize}>;
+                var<workgroup> Bs: array<f32, ${tileSize * workgroupSize.x}>;
+            
+                @compute @workgroup_size(${workgroupSize.x}, ${workgroupSize.y})
+                fn main(
+                    @builtin(global_invocation_id) global_id: vec3<u32>,
+                    @builtin(local_invocation_id) local_id: vec3<u32>,
+                    @builtin(workgroup_id) workgroup_id: vec3<u32>
+                ) {
+                    let N = uniforms.N;
+            
+                    let threadCol = local_id.x;
+                    let threadRow = local_id.y;
+                    let globalCol = global_id.x;
+                    let globalRow = global_id.y;
+            
+                    var acc: f32 = 0.0;
+            
+                    for (var t = 0u; t < N; t = t + TILE_SIZE) {
+                        // Sequential loading for matrix A
+                        for (var i = 0u; i < ELEMENTS_PER_THREAD; i = i + 1u) {
+                            let loadCol = threadCol + i * THREADS_X;
+                            if (loadCol < TILE_SIZE && globalRow < N && t + loadCol < N) {
+                                let aIndex = globalRow * N + (t + loadCol);
+                                let asIndex = threadRow * TILE_SIZE + loadCol;
+                                As[asIndex] = matrixA[aIndex];
+                            }
+                        }
+            
+                        // Sequential loading for matrix B
+                        for (var i = 0u; i < ELEMENTS_PER_THREAD; i = i + 1u) {
+                            let loadRow = threadRow + i * THREADS_Y;
+                            if (loadRow < TILE_SIZE && globalCol < N && t + loadRow < N) {
+                                let bIndex = (t + loadRow) * N + globalCol;
+                                let bsIndex = loadRow * THREADS_X + threadCol;
+                                Bs[bsIndex] = matrixB[bIndex];
+                            }
+                        }
+            
+                        workgroupBarrier();
+            
+                        if (globalRow < N && globalCol < N) {
+                            // Strict sequential processing with bounds checking
+                            for (var k = 0u; k < TILE_SIZE && (t + k) < N; k = k + 1u) {
+                                let aVal = As[threadRow * TILE_SIZE + k];
+                                let bVal = Bs[k * THREADS_X + threadCol];
+                                let product = aVal * bVal;
+                                acc = acc + product;
+                            }
+                        }
+            
+                        workgroupBarrier();
+                    }
+            
+                    if (globalRow < N && globalCol < N) {
+                        let outIndex = globalRow * N + globalCol;
+                        let alpha = uniforms.alpha;
+                        let beta = uniforms.beta;
+                        let currentC = matrixC[outIndex];
+                        matrixC[outIndex] = alpha * acc + beta * currentC;
+                    }
+                }
+            `;
+        }
+
+        function getGPUInfo() {
+            const canvas = document.createElement('canvas');
+            const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+            if (!gl) {
+                return "Unknown GPU";
+            }
+
+            const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+            if (!debugInfo) {
+                return "Unknown GPU";
+            }
+
+            const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+            return renderer;
+        }
+
+        function updateDeviceInfo() {
+            const deviceInfo = document.getElementById('deviceInfo');
+            deviceInfo.innerHTML = `Device Information:
+Device Name: ${deviceName}
+Max Workgroup Size (X): ${maxWorkgroupSize.x}
+Max Workgroup Size (Y): ${maxWorkgroupSize.y}
+Max Workgroup Size (Z): ${maxWorkgroupSize.z}
+Max Total Workgroup Size: ${maxWorkgroupSize.total}
+Total Available Workgroup Configurations: ${workgroupConfigs.length}`;
+        }
+
+        function setupMatrixSizes() {
+            const container = document.getElementById('matrixSizes');
+            container.innerHTML = '';
+            for (let i = 1; i <= 12; i++) {
+                const size = Math.pow(2, i);
+                const label = document.createElement('label');
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.value = size;
+                checkbox.checked = i >= 4 && i <= 8;
+                label.appendChild(checkbox);
+                label.appendChild(document.createTextNode(`${size}x${size}`));
+                container.appendChild(label);
+            }
+        }
+
+        function updateValidTileSizes() {
+            const selectedWorkgroups = Array.from(document.querySelectorAll('#workgroupSizes input:checked'))
+                .map(cb => JSON.parse(cb.value));
+            
+            if (selectedWorkgroups.length === 0) return;
+        
+            // Find the maximum workgroup X dimension among selected configurations
+            const maxWorkgroupX = Math.max(...selectedWorkgroups.map(wg => wg.x));
+            const container = document.getElementById('tileSizes');
+            container.innerHTML = '';
+            
+            // Generate power-of-2 tile sizes up to maxWorkgroupX
+            const tileSizes = [];
+            for (let size = 1; size <= maxWorkgroupX; size *= 2) {
+                // Only add this tile size if it's valid for at least one selected workgroup
+                if (selectedWorkgroups.some(wg => size <= wg.x)) {
+                    tileSizes.push(size);
+                }
+            }
+            
+            // Create checkboxes for each valid tile size
+            for (const size of tileSizes) {
+                const label = document.createElement('label');
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.value = size;
+                // Check by default if this tile size works with most selected workgroups
+                const compatibleWorkgroups = selectedWorkgroups.filter(wg => size <= wg.x).length;
+                checkbox.checked = compatibleWorkgroups >= selectedWorkgroups.length / 2;
+                label.appendChild(checkbox);
+                label.appendChild(document.createTextNode(`1x${size}`));
+                container.appendChild(label);
+            }
+        }
+        
+        function selectRecommendedTileSizes() {
+            const selectedWorkgroups = Array.from(document.querySelectorAll('#workgroupSizes input:checked'))
+                .map(cb => JSON.parse(cb.value));
+        
+            if (selectedWorkgroups.length === 0) return;
+        
+            const maxWorkgroupX = Math.max(...selectedWorkgroups.map(wg => wg.x));
+        
+            document.querySelectorAll('#tileSizes input[type="checkbox"]')
+                .forEach(cb => {
+                    const size = parseInt(cb.value);
+                    // Check the box if this tile size works with at least half of the selected workgroups
+                    const compatibleWorkgroups = selectedWorkgroups.filter(wg => size <= wg.x).length;
+                    cb.checked = compatibleWorkgroups >= selectedWorkgroups.length / 2;
+                });
+        }
+
+        function setupWorkgroupSizes() {
+            const container = document.getElementById('workgroupSizes');
+            container.innerHTML = '';
+            workgroupConfigs.forEach(config => {
+                const label = document.createElement('label');
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.value = JSON.stringify(config);
+                checkbox.checked = (config.x === 128 && config.y === 2) ||
+                                 (config.x === 64 && config.y === 4) ||
+                                 (config.x === 32 && config.y === 8);
+                label.appendChild(checkbox);
+                label.appendChild(document.createTextNode(`${config.x}x${config.y}`));
+                container.appendChild(label);
+            });
+
+            container.addEventListener('change', updateValidTileSizes);
+        }
+
+        // Selection utility functions
+        function selectAllSizes() {
+            document.querySelectorAll('#matrixSizes input[type="checkbox"]')
+                .forEach(cb => cb.checked = true);
+        }
+
+        function deselectAllSizes() {
+            document.querySelectorAll('#matrixSizes input[type="checkbox"]')
+                .forEach(cb => cb.checked = false);
+        }
+
+        function selectRecommendedSizes() {
+            document.querySelectorAll('#matrixSizes input[type="checkbox"]')
+                .forEach(cb => {
+                    const size = parseInt(cb.value);
+                    cb.checked = size >= 64 && size <= 1024;
+                });
+        }
+
+        function selectAllWorkgroups() {
+            document.querySelectorAll('#workgroupSizes input[type="checkbox"]')
+                .forEach(cb => cb.checked = true);
+            updateValidTileSizes();
+        }
+
+        function deselectAllWorkgroups() {
+            document.querySelectorAll('#workgroupSizes input[type="checkbox"]')
+                .forEach(cb => cb.checked = false);
+            updateValidTileSizes();
+        }
+
+        function selectRecommendedWorkgroups() {
+            document.querySelectorAll('#workgroupSizes input[type="checkbox"]')
+                .forEach(cb => {
+                    const config = JSON.parse(cb.value);
+                    cb.checked = (
+                        (config.x === 128 && config.y === 2) ||
+                        (config.x === 64 && config.y === 4) ||
+                        (config.x === 32 && config.y === 8)
+                    );
+                });
+            updateValidTileSizes();
+        }
+
+        function selectAllTileSizes() {
+            document.querySelectorAll('#tileSizes input[type="checkbox"]')
+                .forEach(cb => cb.checked = true);
+        }
+
+        function deselectAllTileSizes() {
+            document.querySelectorAll('#tileSizes input[type="checkbox"]')
+                .forEach(cb => cb.checked = false);
+        }
+
+        function validateWorkgroupSizes(x, y, tileSize) {
+            if (x * y > maxWorkgroupSize.total) {
+                throw new Error(`Total workgroup size (${x * y}) exceeds device limit (${maxWorkgroupSize.total})`);
+            }
+            if (x > maxWorkgroupSize.x) {
+                throw new Error(`Workgroup X size (${x}) exceeds device limit (${maxWorkgroupSize.x})`);
+            }
+            if (y > maxWorkgroupSize.y) {
+                throw new Error(`Workgroup Y size (${y}) exceeds device limit (${maxWorkgroupSize.y})`);
+            }
+            if (x * y > 256) {
+                throw new Error(`Total workgroup size (${x * y}) exceeds WebGPU limit (256)`);
+            }
+            if (tileSize > x) {
+                throw new Error(`Tile size (${tileSize}) exceeds workgroup X dimension (${x})`);
+            }
+        }
+
+        function createBuffer(data, usage) {
+            const buffer = device.createBuffer({
+                size: data.byteLength,
+                usage: usage,
+                mappedAtCreation: true,
+            });
+            new Float32Array(buffer.getMappedRange()).set(data);
+            buffer.unmap();
+            return buffer;
+        }
+
+        function verifyMatrixMultiplication(matrixA, matrixB, resultMatrix, N, alpha, beta) {
+            for (let check = 0; check < 5; check++) {
+                const row = Math.floor(Math.random() * N);
+                const col = Math.floor(Math.random() * N);
+                let expected = 0;
+                for (let i = 0; i < N; i++) {
+                    expected += matrixA[row * N + i] * matrixB[i * N + col];
+                }
+                expected = alpha * expected + beta * 0;
+                const actual = resultMatrix[row * N + col];
+                const relativeError = Math.abs((expected - actual) / expected);
+                if (relativeError > 1e-5) {
+                    console.log(`Verification failed at (${row},${col}): expected=${expected}, actual=${actual}, error=${relativeError}`);
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        async function runBenchmark(N, workgroupSize, tileSize) {
+            validateWorkgroupSizes(workgroupSize.x, workgroupSize.y, tileSize);
+
+            const matrixSize = N * N;
+            const matrixA = new Float32Array(matrixSize);
+            const matrixB = new Float32Array(matrixSize);
+            const resultMatrix = new Float32Array(matrixSize).fill(0);
+
+            for (let i = 0; i < matrixSize; i++) {
+                matrixA[i] = Math.random();
+                matrixB[i] = Math.random();
+            }
+
+            const bufferA = createBuffer(matrixA, GPUBufferUsage.STORAGE);
+            const bufferB = createBuffer(matrixB, GPUBufferUsage.STORAGE);
+            const bufferC = createBuffer(resultMatrix, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
+
+            const uniformBuffer = device.createBuffer({
+                size: 16,
+                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+            });
+
+            const uniformData = new ArrayBuffer(16);
+            new Uint32Array(uniformData, 0, 1)[0] = N;
+            new Float32Array(uniformData, 4, 1)[0] = 1.0; // alpha
+            new Float32Array(uniformData, 8, 1)[0] = 0.0; // beta
+            device.queue.writeBuffer(uniformBuffer, 0, uniformData);
+
+            const bindGroupLayout = device.createBindGroupLayout({
+                entries: [
+                    { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+                    { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+                    { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+                    { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+                ],
+            });
+
+            const bindGroup = device.createBindGroup({
+                layout: bindGroupLayout,
+                entries: [
+                    { binding: 0, resource: { buffer: bufferA } },
+                    { binding: 1, resource: { buffer: bufferB } },
+                    { binding: 2, resource: { buffer: bufferC } },
+                    { binding: 3, resource: { buffer: uniformBuffer } },
+                ],
+            });
+
+            const pipeline = device.createComputePipeline({
+                layout: device.createPipelineLayout({
+                    bindGroupLayouts: [bindGroupLayout],
+                }),
+                compute: {
+                    module: device.createShaderModule({
+                        code: get1DTilingWGSL(workgroupSize, tileSize),
+                    }),
+                    entryPoint: "main",
+                },
+            });
+
+            const commandEncoder = device.createCommandEncoder();
+            const passEncoder = commandEncoder.beginComputePass();
+            passEncoder.setPipeline(pipeline);
+            passEncoder.setBindGroup(0, bindGroup);
+            passEncoder.dispatchWorkgroups(
+                Math.ceil(N / workgroupSize.x),
+                Math.ceil(N / workgroupSize.y)
+            );
+            passEncoder.end();
+
+            const gpuCommands = commandEncoder.finish();
+            const startTime = performance.now();
+            device.queue.submit([gpuCommands]);
+            await device.queue.onSubmittedWorkDone();
+            const endTime = performance.now();
+
+            const resultBuffer = device.createBuffer({
+                size: bufferC.size,
+                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+            });
+
+            const copyEncoder = device.createCommandEncoder();
+            copyEncoder.copyBufferToBuffer(bufferC, 0, resultBuffer, 0, bufferC.size);
+            device.queue.submit([copyEncoder.finish()]);
+
+            await resultBuffer.mapAsync(GPUMapMode.READ);
+            const resultArray = new Float32Array(resultBuffer.getMappedRange());
+            const verified = verifyMatrixMultiplication(matrixA, matrixB, resultArray, N, 1.0, 0.0);
+            resultBuffer.unmap();
+
+            const time = endTime - startTime;
+            const gflops = (2 * N * N * N) / (time * 1e6);
+            const memoryMB = (matrixSize * 3 * 4) / (1024 * 1024);
+
+            bufferA.destroy();
+            bufferB.destroy();
+            bufferC.destroy();
+            uniformBuffer.destroy();
+            resultBuffer.destroy();
+
+            return {
+                time,
+                gflops,
+                memoryMB,
+                verified
+            };
+        }
+
+        async function runIterations(N, workgroupSize, tileSize, iterations) {
+            const results = [];
+            await runBenchmark(N, workgroupSize, tileSize); // Warm-up run
+
+            for (let i = 0; i < iterations; i++) {
+                const result = await runBenchmark(N, workgroupSize, tileSize);
+                results.push(result);
+            }
+
+            const times = results.map(r => r.time);
+            const gflops = results.map(r => r.gflops);
+
+            return {
+                size: N,
+                workgroupX: workgroupSize.x,
+                workgroupY: workgroupSize.y,
+                tileSize: tileSize,
+                iterations,
+                avgTime: times.reduce((a, b) => a + b) / times.length,
+                minTime: Math.min(...times),
+                maxTime: Math.max(...times),
+                avgGflops: gflops.reduce((a, b) => a + b) / gflops.length,
+                memoryMB: results[0].memoryMB,
+                verified: results.every(r => r.verified)
+            };
+        }
+
+        function updateBestPerformers(result) {
+            const key = result.size;
+            if (result.verified && (!bestPerformers.has(key) || bestPerformers.get(key).avgGflops < result.avgGflops)) {
+                bestPerformers.set(key, result);
+                updateBestPerformersTable();
+            }
+        }
+
+        function updateBestPerformersTable() {
+            const table = document.getElementById('bestPerformersTable').getElementsByTagName('tbody')[0];
+            table.innerHTML = '';
+
+            Array.from(bestPerformers.values())
+                .sort((a, b) => a.size - b.size)
+                .forEach(result => {
+                    const row = table.insertRow();
+                    row.innerHTML = `
+                        <td>${result.size}x${result.size}</td>
+                        <td>${result.workgroupX}x${result.workgroupY}</td>
+                        <td>1x${result.tileSize}</td>
+                        <td>${result.iterations}</td>
+                        <td>${result.avgTime.toFixed(2)}</td>
+                        <td>${result.minTime.toFixed(2)}</td>
+                        <td>${result.maxTime.toFixed(2)}</td>
+                        <td>${result.avgGflops.toFixed(2)}</td>
+                        <td>${result.memoryMB.toFixed(2)}</td>
+                        <td>${result.verified ? '✓' : '✗'}</td>
+                    `;
+                });
+        }
+
+        function clearResults() {
+            const resultsTable = document.getElementById('resultsTable').getElementsByTagName('tbody')[0];
+            const bestPerformersTable = document.getElementById('bestPerformersTable').getElementsByTagName('tbody')[0];
+            resultsTable.innerHTML = '';
+            bestPerformersTable.innerHTML = '';
+            benchmarkResults = [];
+            bestPerformers.clear();
+            const status = document.getElementById('status');
+            status.className = 'success';
+            status.textContent = 'Results cleared.';
+        }
+
+        function downloadCSV(results) {
+            const csv = [
+                'Matrix Size,Tile Size,Workgroup Size,Iterations,Avg Time (ms),Min Time (ms),Max Time (ms),Avg GFLOPS,Memory (MB),Verified'
+            ];
+
+            results.forEach(result => {
+                csv.push(`${result.size}x${result.size},1x${result.tileSize},${result.workgroupX}x${result.workgroupY},${result.iterations},${result.avgTime.toFixed(2)},${result.minTime.toFixed(2)},${result.maxTime.toFixed(2)},${result.avgGflops.toFixed(2)},${result.memoryMB.toFixed(2)},${result.verified}`);
+            });
+
+            csv.push('');
+            csv.push('Best Performers');
+            csv.push('Matrix Size,Best Configuration,Tile Size,Iterations,Avg Time (ms),Min Time (ms),Max Time (ms),Avg GFLOPS,Memory (MB),Verified');
+
+            Array.from(bestPerformers.values())
+                .sort((a, b) => a.size - b.size)
+                .forEach(result => {
+                    csv.push(`${result.size}x${result.size},${result.workgroupX}x${result.workgroupY},1x${result.tileSize},${result.iterations},${result.avgTime.toFixed(2)},${result.minTime.toFixed(2)},${result.maxTime.toFixed(2)},${result.avgGflops.toFixed(2)},${result.memoryMB.toFixed(2)},${result.verified}`);
+                });
+
+		const blob = new Blob([csv.join('\n')], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.setAttribute('href', url);
+            a.setAttribute('download', '1d_tiling_matmul_results.csv');
+            a.click();
+            window.URL.revokeObjectURL(url);
+        }
+
+        async function initWebGPU() {
+            if (!navigator.gpu) {
+                throw new Error("WebGPU not supported");
+            }
+            adapter = await navigator.gpu.requestAdapter();
+            if (!adapter) {
+                throw new Error("No appropriate GPUAdapter found");
+            }
+
+            deviceName = getGPUInfo();
+            device = await adapter.requestDevice();
+
+            maxWorkgroupSize = {
+                x: device.limits.maxComputeWorkgroupSizeX,
+                y: device.limits.maxComputeWorkgroupSizeY,
+                z: device.limits.maxComputeWorkgroupSizeZ,
+                total: device.limits.maxComputeInvocationsPerWorkgroup
+            };
+
+            updateDeviceInfo();
+            setupMatrixSizes();
+            setupWorkgroupSizes();
+            updateValidTileSizes();
+            return device;
+        }
+
+        async function main() {
+            const status = document.getElementById('status');
+            const resultsTable = document.getElementById('resultsTable').getElementsByTagName('tbody')[0];
+            const runButton = document.getElementById('runBenchmark');
+            const downloadButton = document.getElementById('downloadResults');
+            const clearButton = document.getElementById('clearResults');
+            const iterationsInput = document.getElementById('iterations');
+
+            clearButton.onclick = clearResults;
+            downloadButton.onclick = () => {
+                if (benchmarkResults.length > 0) {
+                    downloadCSV(benchmarkResults);
+                } else {
+                    status.className = 'warning';
+                    status.textContent = 'No results to download. Run the benchmark first.';
+                }
+            };
+
+            try {
+                status.className = '';
+                status.textContent = 'Initializing WebGPU...';
+
+                await initWebGPU();
+
+                status.className = 'success';
+                status.textContent = 'WebGPU initialized successfully. Ready to run benchmark.';
+
+                runButton.onclick = async () => {
+                    try {
+                        const selectedSizes = Array.from(document.querySelectorAll('#matrixSizes input:checked'))
+                            .map(cb => parseInt(cb.value))
+                            .sort((a, b) => a - b);
+
+                        const selectedTileSizes = Array.from(document.querySelectorAll('#tileSizes input:checked'))
+                            .map(cb => parseInt(cb.value))
+                            .sort((a, b) => a - b);
+
+                        const selectedWorkgroups = Array.from(document.querySelectorAll('#workgroupSizes input:checked'))
+                            .map(cb => JSON.parse(cb.value));
+
+                        if (selectedSizes.length === 0 || selectedTileSizes.length === 0 ||
+                            selectedWorkgroups.length === 0) {
+                            status.className = 'warning';
+                            status.textContent = 'Please select at least one option for each parameter.';
+                            return;
+                        }
+
+                        const iterations = parseInt(iterationsInput.value) || 3;
+                        if (iterations < 1) {
+                            status.className = 'warning';
+                            status.textContent = 'Please enter a valid number of iterations (minimum 1).';
+                            return;
+                        }
+
+                        runButton.disabled = true;
+                        downloadButton.disabled = true;
+                        status.className = '';
+
+                        const totalRuns = selectedSizes.length * selectedTileSizes.length * selectedWorkgroups.length;
+                        let completedRuns = 0;
+
+                        for (const size of selectedSizes) {
+                            for (const tileSize of selectedTileSizes) {
+                                for (const workgroup of selectedWorkgroups) {
+                                    try {
+                                        validateWorkgroupSizes(workgroup.x, workgroup.y, tileSize);
+
+                                        status.className = 'success';
+                                        status.textContent = `Running benchmark ${++completedRuns}/${totalRuns}: ${size}x${size} matrix with ${workgroup.x}x${workgroup.y} workgroup and 1x${tileSize} tile...`;
+
+                                        const result = await runIterations(size, workgroup, tileSize, iterations);
+                                        benchmarkResults.push(result);
+                                        updateBestPerformers(result);
+
+                                        const row = resultsTable.insertRow(0);
+                                        row.innerHTML = `
+                                            <td>${size}x${size}</td>
+                                            <td>1x${tileSize}</td>
+                                            <td>${workgroup.x}x${workgroup.y}</td>
+                                            <td>${result.avgTime.toFixed(2)}</td>
+                                            <td>${result.minTime.toFixed(2)}</td>
+                                            <td>${result.maxTime.toFixed(2)}</td>
+                                            <td>${result.avgGflops.toFixed(2)}</td>
+                                            <td>${result.memoryMB.toFixed(2)}</td>
+                                            <td>${result.verified ? '✓' : '✗'}</td>
+                                        `;
+                                    } catch (error) {
+                                        console.warn(`Skipping configuration: Matrix ${size}x${size}, Workgroup ${workgroup.x}x${workgroup.y}, Tile 1x${tileSize}: ${error.message}`);
+                                    }
+                                }
+                            }
+                        }
+
+                        status.className = 'success';
+                        status.textContent = 'Benchmark completed successfully!';
+                        runButton.disabled = false;
+                        downloadButton.disabled = false;
+
+                    } catch (error) {
+                        status.className = 'error';
+                        status.textContent = 'Error during benchmark: ' + error.message;
+                        console.error('Benchmark error:', error);
+                        runButton.disabled = false;
+                        downloadButton.disabled = false;
+                    }
+                };
+
+            } catch (error) {
+                status.className = 'error';
+                status.textContent = 'Failed to initialize WebGPU: ' + error.message;
+                console.error('Initialization error:', error);
+                runButton.disabled = true;
+                downloadButton.disabled = true;
+            }
+        }
+
+        window.addEventListener('load', main);
+    </script>
+</body>
+</html>
