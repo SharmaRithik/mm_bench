@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>1D Tiling Matrix Multiplication Benchmark</title>
+    <title>1D Tiling Vector dot product Matrix Multiplication Benchmark</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -267,86 +267,117 @@
         }
 
         function get1DTilingWGSL(workgroupSize, tileSize) {
-		return `
-                struct Uniforms {
-                    N: u32,       // Matrix dimension
-                    alpha: f32,   // Alpha scalar
-                    beta: f32,    // Beta scalar
-                };
-            
-                @group(0) @binding(0) var<storage, read> matrixA: array<f32>;
-                @group(0) @binding(1) var<storage, read> matrixB: array<f32>;
-                @group(0) @binding(2) var<storage, read_write> matrixC: array<f32>;
-                @group(0) @binding(3) var<uniform> uniforms: Uniforms;
-            
-                const THREADS_X = ${workgroupSize.x}u;
-                const THREADS_Y = ${workgroupSize.y}u;
-                const TILE_SIZE = ${tileSize}u;
-                const ELEMENTS_PER_THREAD = (TILE_SIZE + THREADS_X - 1u) / THREADS_X;
-            
-                var<workgroup> As: array<f32, ${workgroupSize.y * tileSize}>;
-                var<workgroup> Bs: array<f32, ${tileSize * workgroupSize.x}>;
-            
-                @compute @workgroup_size(${workgroupSize.x}, ${workgroupSize.y})
-                fn main(
-                    @builtin(global_invocation_id) global_id: vec3<u32>,
-                    @builtin(local_invocation_id) local_id: vec3<u32>,
-                    @builtin(workgroup_id) workgroup_id: vec3<u32>
-                ) {
-                    let N = uniforms.N;
-            
-                    let threadCol = local_id.x;
-                    let threadRow = local_id.y;
-                    let globalCol = global_id.x;
-                    let globalRow = global_id.y;
-            
-                    var acc: f32 = 0.0;
-            
-                    for (var t = 0u; t < N; t = t + TILE_SIZE) {
-                        // Sequential loading for matrix A
-                        for (var i = 0u; i < ELEMENTS_PER_THREAD; i = i + 1u) {
-                            let loadCol = threadCol + i * THREADS_X;
-                            if (loadCol < TILE_SIZE && globalRow < N && t + loadCol < N) {
-                                let aIndex = globalRow * N + (t + loadCol);
-                                let asIndex = threadRow * TILE_SIZE + loadCol;
-                                As[asIndex] = matrixA[aIndex];
-                            }
+            return `
+            struct Uniforms {
+                N: u32,       // Matrix dimension
+                alpha: f32,   // Alpha scalar
+                beta: f32,    // Beta scalar
+            };
+        
+            @group(0) @binding(0) var<storage, read> matrixA: array<f32>;
+            @group(0) @binding(1) var<storage, read> matrixB: array<f32>;
+            @group(0) @binding(2) var<storage, read_write> matrixC: array<f32>;
+            @group(0) @binding(3) var<uniform> uniforms: Uniforms;
+        
+            const THREADS_X = ${workgroupSize.x}u;
+            const THREADS_Y = ${workgroupSize.y}u;
+            const TILE_SIZE = ${tileSize}u;
+            // Calculate how many elements each thread needs to load
+            const ELEMENTS_PER_THREAD = (TILE_SIZE + THREADS_X - 1u) / THREADS_X;
+            const VEC_SIZE = 4u;
+        
+            var<workgroup> As: array<f32, ${workgroupSize.y * tileSize}>;
+            var<workgroup> Bs: array<f32, ${tileSize * workgroupSize.x}>;
+        
+            @compute @workgroup_size(${workgroupSize.x}, ${workgroupSize.y})
+            fn main(
+                @builtin(global_invocation_id) global_id: vec3<u32>,
+                @builtin(local_invocation_id) local_id: vec3<u32>,
+                @builtin(workgroup_id) workgroup_id: vec3<u32>
+            ) {
+                let N = uniforms.N;
+                let threadCol = local_id.x;
+                let threadRow = local_id.y;
+                let globalRow = global_id.y;
+                let globalCol = global_id.x;
+        
+                var acc: f32 = 0.0;
+        
+                for (var t = 0u; t < N; t = t + TILE_SIZE) {
+                    // Load matrix A into shared memory
+                    // Each thread loads multiple elements in a strided pattern
+                    for (var i = threadCol; i < TILE_SIZE; i = i + THREADS_X) {
+                        if (globalRow < N && t + i < N) {
+                            let aIndex = globalRow * N + (t + i);
+                            let asIndex = threadRow * TILE_SIZE + i;
+                            As[asIndex] = matrixA[aIndex];
+                        } else {
+                            let asIndex = threadRow * TILE_SIZE + i;
+                            As[asIndex] = 0.0;
                         }
-            
-                        // Sequential loading for matrix B
-                        for (var i = 0u; i < ELEMENTS_PER_THREAD; i = i + 1u) {
-                            let loadRow = threadRow + i * THREADS_Y;
-                            if (loadRow < TILE_SIZE && globalCol < N && t + loadRow < N) {
-                                let bIndex = (t + loadRow) * N + globalCol;
-                                let bsIndex = loadRow * THREADS_X + threadCol;
-                                Bs[bsIndex] = matrixB[bIndex];
-                            }
-                        }
-            
-                        workgroupBarrier();
-            
-                        if (globalRow < N && globalCol < N) {
-                            // Strict sequential processing with bounds checking
-                            for (var k = 0u; k < TILE_SIZE && (t + k) < N; k = k + 1u) {
-                                let aVal = As[threadRow * TILE_SIZE + k];
-                                let bVal = Bs[k * THREADS_X + threadCol];
-                                let product = aVal * bVal;
-                                acc = acc + product;
-                            }
-                        }
-            
-                        workgroupBarrier();
                     }
-            
+        
+                    // Load matrix B into shared memory
+                    // Each thread loads multiple elements in a strided pattern
+                    for (var i = threadRow; i < TILE_SIZE; i = i + THREADS_Y) {
+                        if (globalCol < N && t + i < N) {
+                            let bIndex = (t + i) * N + globalCol;
+                            let bsIndex = i * THREADS_X + threadCol;
+                            Bs[bsIndex] = matrixB[bIndex];
+                        } else {
+                            let bsIndex = i * THREADS_X + threadCol;
+                            Bs[bsIndex] = 0.0;
+                        }
+                    }
+        
+                    workgroupBarrier();
+        
                     if (globalRow < N && globalCol < N) {
-                        let outIndex = globalRow * N + globalCol;
-                        let alpha = uniforms.alpha;
-                        let beta = uniforms.beta;
-                        let currentC = matrixC[outIndex];
-                        matrixC[outIndex] = alpha * acc + beta * currentC;
+                        var k = 0u;
+                        // Process vectors of 4 elements
+                        loop {
+                            if (k + VEC_SIZE > TILE_SIZE || t + k + VEC_SIZE > N) { break; }
+                            
+                            let aRow = threadRow * TILE_SIZE;
+                            let a_vec = vec4<f32>(
+                                As[aRow + k],
+                                As[aRow + k + 1u],
+                                As[aRow + k + 2u],
+                                As[aRow + k + 3u]
+                            );
+                            
+                            let b_vec = vec4<f32>(
+                                Bs[k * THREADS_X + threadCol],
+                                Bs[(k + 1u) * THREADS_X + threadCol],
+                                Bs[(k + 2u) * THREADS_X + threadCol],
+                                Bs[(k + 3u) * THREADS_X + threadCol]
+                            );
+                            
+                            acc = acc + dot(a_vec, b_vec);
+                            k = k + VEC_SIZE;
+                        }
+                        
+                        // Handle remaining elements
+                        while (k < TILE_SIZE && t + k < N) {
+                            let aVal = As[threadRow * TILE_SIZE + k];
+                            let bVal = Bs[k * THREADS_X + threadCol];
+                            acc = acc + aVal * bVal;
+                            k = k + 1u;
+                        }
                     }
+        
+                    workgroupBarrier();
                 }
-            `;
+        
+                if (globalRow < N && globalCol < N) {
+                    let outIndex = globalRow * N + globalCol;
+                    let alpha = uniforms.alpha;
+                    let beta = uniforms.beta;
+                    let currentC = matrixC[outIndex];
+                    matrixC[outIndex] = alpha * acc + beta * currentC;
+                }
+            }
+        `;
         }
 
         function getGPUInfo() {
