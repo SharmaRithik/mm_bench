@@ -1,363 +1,97 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>WebGPU Matrix Multiplication - Parameter Testing</title>
+    <title>WebGPU Matrix Multiplication - Parameter Tuning</title>
     <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-            background-color: #f5f5f5;
-        }
-        
         #output { 
             font-family: monospace; 
-            white-space: pre-wrap; 
-            margin: 20px;
-            background: white;
-            padding: 15px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            white-space: pre; 
+            margin: 20px; 
+            font-size: 14px;
         }
-
-        .correct { color: #28a745; }
-        .incorrect { color: #dc3545; }
-        .skipped { color: #6c757d; font-style: italic; }
-        
-        #resultsTable {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 20px;
-            background: white;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            border-radius: 8px;
-            overflow: hidden;
-        }
-
-        #resultsTable th, #resultsTable td {
-            padding: 12px;
-            text-align: left;
-            border: 1px solid #dee2e6;
-        }
-
-        #resultsTable th {
-            background: #f8f9fa;
-            font-weight: bold;
-        }
-
-        #resultsTable tr:nth-child(even) {
-            background: #f8f9fa;
-        }
-
-        .performance-high { background-color: #d4edda !important; }
-        .performance-medium { background-color: #fff3cd !important; }
-        .performance-low { background-color: #f8d7da !important; }
-        .performance-skipped { background-color: #e9ecef !important; }
-
-        .controls {
-            background: white;
-            padding: 15px;
-            border-radius: 8px;
-            margin: 20px 0;
-            display: flex;
-            gap: 15px;
-            align-items: center;
-            flex-wrap: wrap;
-        }
-
-        button {
-            padding: 8px 16px;
-            border: none;
-            border-radius: 4px;
-            background: #0066cc;
-            color: white;
-            cursor: pointer;
-        }
-
-        button:hover {
-            background: #0056b3;
-        }
-
-        button:disabled {
-            background: #cccccc;
-            cursor: not-allowed;
-        }
-
-        .progress {
-            margin-top: 10px;
-            height: 20px;
-            background: #e9ecef;
-            border-radius: 4px;
-            overflow: hidden;
-        }
-
-        .progress-bar {
-            height: 100%;
-            background: #0066cc;
-            width: 0%;
-            transition: width 0.3s ease;
-        }
-
-        #currentTest {
+        .test-result {
             margin: 10px 0;
-            font-weight: bold;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+        }
+        .performance { 
             color: #0066cc;
+            font-weight: bold;
         }
-
-        .export-btn {
-            background: #28a745;
+        .error {
+            color: #dc3545;
         }
-
-        .export-btn:hover {
-            background: #218838;
-        }
-
-        .verification-modal {
-            display: none;
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-            max-width: 800px;
-            width: 90%;
-            max-height: 80vh;
-            overflow-y: auto;
-            z-index: 1000;
-        }
-
-        .verification-modal h3 {
-            margin-top: 0;
-            margin-bottom: 15px;
-        }
-
-        .modal-table {
-            width: 100%;
+        .correct { color: green; }
+        .incorrect { color: red; }
+        table {
             border-collapse: collapse;
-            margin: 10px 0;
-        }
-
-        .modal-table th,
-        .modal-table td {
-            padding: 8px;
-            border: 1px solid #dee2e6;
-            text-align: right;
-        }
-
-        .modal-close {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            padding: 5px 10px;
-            background: #dc3545;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-
-        .modal-close:hover {
-            background: #c82333;
-        }
-
-        .modal-backdrop {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
+            margin: 20px 0;
             width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.5);
-            z-index: 999;
         }
-
+        th, td {
+            border: 1px solid #dee2e6;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f8f9fa;
+        }
+        .best-result {
+            background-color: #d4edda;
+        }
+        .stats {
+            margin-top: 10px;
+            color: #666;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+        }
+        .verification-details {
+            display: none;
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-left: 4px solid #0066cc;
+        }
         .config-row {
             cursor: pointer;
-            transition: background-color 0.2s;
         }
-
         .config-row:hover {
-            background-color: #e9ecef !important;
+            background-color: #f5f5f5;
         }
-
-        #timeoutInput {
-            padding: 5px;
-            border: 1px solid #ced4da;
-            border-radius: 4px;
-            width: 100px;
-        }
-
-        .timeout-label {
-            font-weight: bold;
-            color: #495057;
-        }
-
-        .stats {
-            margin-top: 20px;
-            padding: 15px;
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-
-        .stats h3 {
-            margin-top: 0;
-            color: #495057;
-        }
-
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-top: 10px;
-        }
-
-        .stat-item {
-            padding: 10px;
-            background: #f8f9fa;
-            border-radius: 4px;
-        }
-
-        .stat-label {
+        .verification-table {
+            margin: 10px 0;
+            width: 100%;
             font-size: 0.9em;
-            color: #6c757d;
         }
-
-        .stat-value {
-            font-size: 1.2em;
-            font-weight: bold;
-            color: #0066cc;
-            margin-top: 5px;
+        .verification-table th {
+            background-color: #e9ecef;
+        }
+        .verification-summary {
+            margin-bottom: 10px;
+            padding: 5px;
+            background-color: #e9ecef;
+            border-radius: 4px;
         }
     </style>
 </head>
 <body>
-    <h1>WebGPU Matrix Multiplication Parameter Testing</h1>
-    
-    <div class="controls">
-        <button id="startButton">Start Testing</button>
-        <button id="exportButton" class="export-btn" disabled>Export Results</button>
-        <div>
-            <label for="timeoutInput" class="timeout-label">Timeout (ms):</label>
-            <input type="number" id="timeoutInput" value="1000" min="100" step="100">
-        </div>
-    </div>
-
-    <div id="currentTest"></div>
-    <div class="progress">
-        <div id="progressBar" class="progress-bar"></div>
-    </div>
-
-    <div class="stats">
-        <h3>Testing Statistics</h3>
-        <div class="stats-grid">
-            <div class="stat-item">
-                <div class="stat-label">Total Configurations</div>
-                <div class="stat-value" id="totalConfigs">0</div>
-            </div>
-            <div class="stat-item">
-                <div class="stat-label">Completed Tests</div>
-                <div class="stat-value" id="completedTests">0</div>
-            </div>
-            <div class="stat-item">
-                <div class="stat-label">Skipped Tests</div>
-                <div class="stat-value" id="skippedTests">0</div>
-            </div>
-            <div class="stat-item">
-                <div class="stat-label">Success Rate</div>
-                <div class="stat-value" id="successRate">0%</div>
-            </div>
-        </div>
-    </div>
-
+    <h1>WebGPU Matrix Multiplication Parameter Tuning</h1>
     <div id="output"></div>
-    <table id="resultsTable">
-        <thead>
-            <tr>
-                <th>Configuration</th>
-                <th>Threads/Block</th>
-                <th>Grid Size</th>
-                <th>Shared Memory</th>
-                <th>Setup Time (ms)</th>
-                <th>Kernel Time (ms)</th>
-                <th>GFLOP/s</th>
-                <th>Status</th>
-            </tr>
-        </thead>
-        <tbody></tbody>
-    </table>
-
-    <div id="verificationBackdrop" class="modal-backdrop"></div>
-    <div id="verificationModal" class="verification-modal">
-        <button class="modal-close">&times;</button>
-        <h3>Verification Details</h3>
-        <div id="verificationContent"></div>
-    </div>
-
     <script type="text/javascript">
-        function generateConfigurations() {
-            const possibleBM = [32, 64, 128, 256];
-            const possibleBN = [32, 64, 128, 256];
-            const possibleBK = [8, 16, 32];
-            const possibleTM = [4, 8, 16];
-            const possibleTN = [4, 8, 16];
+        const MATRIX_SIZE = 4096;
 
-            const maxThreadsPerBlock = 256;
-            const maxSharedMemory = 32768;
-            const matrixSize = 4096;
-
-            const validConfigs = [];
-
-            function isValidConfiguration(bm, bn, bk, tm, tn) {
-                const threadsPerBlock = (bm * bn) / (tm * tn);
-                if (threadsPerBlock > maxThreadsPerBlock || threadsPerBlock < 32) return false;
-
-                const sharedMemorySize = (bm * bk + bk * bn) * 4;
-                if (sharedMemorySize > maxSharedMemory) return false;
-
-                const elementsPerThread = tm * tn;
-                if (elementsPerThread > 256) return false;
-
-                const numBlocksM = Math.ceil(matrixSize / bm);
-                const numBlocksN = Math.ceil(matrixSize / bn);
-                if (numBlocksM > 65535 || numBlocksN > 65535) return false;
-
-                return true;
-            }
-
-            for (const bm of possibleBM) {
-                for (const bn of possibleBN) {
-                    for (const bk of possibleBK) {
-                        for (const tm of possibleTM) {
-                            for (const tn of possibleTN) {
-                                if (isValidConfiguration(bm, bn, bk, tm, tn)) {
-                                    const threadsPerBlock = (bm * bn) / (tm * tn);
-                                    const sharedMemory = (bm * bk + bk * bn) * 4;
-                                    
-                                    validConfigs.push({
-                                        BM: bm,
-                                        BN: bn,
-                                        BK: bk,
-                                        TM: tm,
-                                        TN: tn,
-                                        threadsPerBlock: Math.floor(threadsPerBlock),
-                                        sharedMemoryBytes: sharedMemory,
-                                        numBlocksM: Math.ceil(matrixSize / bm),
-                                        numBlocksN: Math.ceil(matrixSize / bn)
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            return validConfigs;
-        }
+        const configurations = [
+            { BK: 8, BM: 128, BN: 128, TM: 8, TN: 8 },
+            { BK: 4, BM: 64, BN: 64, TM: 4, TN: 4 },
+            { BK: 16, BM: 256, BN: 256, TM: 16, TN: 16 },
+            { BK: 8, BM: 128, BN: 64, TM: 8, TN: 4 },
+            { BK: 16, BM: 64, BN: 128, TM: 4, TN: 8 },
+            { BK: 32, BM: 128, BN: 128, TM: 8, TN: 8 },
+            { BK: 8, BM: 256, BN: 128, TM: 16, TN: 8 },
+            { BK: 4, BM: 128, BN: 256, TM: 8, TN: 16 }
+        ];
 
         function generateRandomMatrix(size) {
             const matrix = new Float32Array(size * size);
@@ -384,7 +118,7 @@
 
         function verifyResults(firstMatrix, secondMatrix, gpuResult, M, N, K) {
             const results = [];
-            const numChecks = 20;
+            const numChecks = 25;
             
             const positions = new Set();
             while(positions.size < numChecks) {
@@ -405,464 +139,404 @@
                     col,
                     cpuResult,
                     gpuResult: gpuResultVal,
-                    diff,
-                    isCorrect
+                    isCorrect,
+                    diff
                 });
             }
 
-            return {
-                allCorrect: results.every(r => r.isCorrect),
-                details: results
-            };
+            return results;
         }
 
-        async function testConfiguration(config, firstMatrix, secondMatrix, device, timeout) {
-            return new Promise(async (resolve, reject) => {
-                const timeoutId = setTimeout(() => {
-                    reject(new Error('Timeout'));
-                }, timeout);
-
-                try {
-                    const MATRIX_SIZE = 4096;
-
-                    // Create shader with current configuration
-                    const shaderCode = `
-                        struct Matrix {
-                            size : vec2f,
-                            numbers: array<f32>,
-                        }
-
-                        @group(0) @binding(0) var<storage, read> firstMatrix : Matrix;
-                        @group(0) @binding(1) var<storage, read> secondMatrix : Matrix;
-                        @group(0) @binding(2) var<storage, read_write> resultMatrix : Matrix;
-
-                        var<workgroup> tileA: array<array<f32, ${config.BK}>, ${config.BM}>;
-                        var<workgroup> tileB: array<array<f32, ${config.BK}>, ${config.BN}>;
-
-                        @compute @workgroup_size(${config.threadsPerBlock})
-                        fn main(
-			    @builtin(local_invocation_id) local_id : vec3<u32>,
-                            @builtin(workgroup_id) workgroup_id : vec3<u32>
-                        ) {
-                            let threadCol = local_id.x % (${config.BN} / ${config.TN});
-                            let threadRow = local_id.x / (${config.BN} / ${config.TN});
-
-                            let innerRowA = local_id.x / ${config.BK};
-                            let innerColA = local_id.x % ${config.BK};
-                            let strideA = ${config.threadsPerBlock}u / ${config.BK}u;
-                            
-                            let innerRowB = local_id.x / ${config.BN};
-                            let innerColB = local_id.x % ${config.BN};
-                            let strideB = ${config.threadsPerBlock}u / ${config.BN}u;
-
-                            var threadResults: array<f32, ${config.TM * config.TN}>;
-                            for(var i = 0u; i < ${config.TM * config.TN}; i = i + 1u) {
-                                threadResults[i] = 0.0;
-                            }
-
-                            var regM: array<f32, ${config.TM}>;
-                            var regN: array<f32, ${config.TN}>;
-
-                            let blockRowA = workgroup_id.y * ${config.BM}u;
-                            let blockColB = workgroup_id.x * ${config.BN}u;
-
-                            let K = u32(firstMatrix.size.x);
-                            
-                            for(var bkIdx = 0u; bkIdx < K; bkIdx = bkIdx + ${config.BK}u) {
-                                for(var i = 0u; i < ${config.BM}u; i = i + strideA) {
-                                    let gmemIdx = (blockRowA + innerRowA + i) * K + bkIdx + innerColA;
-                                    if((blockRowA + innerRowA + i) < u32(firstMatrix.size.y) && 
-                                       (bkIdx + innerColA) < K) {
-                                        tileA[innerRowA + i][innerColA] = firstMatrix.numbers[gmemIdx];
-                                    } else {
-                                        tileA[innerRowA + i][innerColA] = 0.0;
-                                    }
-                                }
-
-                                for(var i = 0u; i < ${config.BK}u; i = i + strideB) {
-                                    let gmemIdx = (bkIdx + innerRowB + i) * u32(secondMatrix.size.x) + 
-                                                blockColB + innerColB;
-                                    if((bkIdx + innerRowB + i) < K && 
-                                       (blockColB + innerColB) < u32(secondMatrix.size.x)) {
-                                        tileB[innerRowB + i][innerColB] = secondMatrix.numbers[gmemIdx];
-                                    } else {
-                                        tileB[innerRowB + i][innerColB] = 0.0;
-                                    }
-                                }
-
-                                workgroupBarrier();
-
-                                for(var dotIdx = 0u; dotIdx < ${config.BK}u; dotIdx = dotIdx + 1u) {
-                                    for(var i = 0u; i < ${config.TM}u; i = i + 1u) {
-                                        regM[i] = tileA[threadRow * ${config.TM}u + i][dotIdx];
-                                    }
-                                    for(var i = 0u; i < ${config.TN}u; i = i + 1u) {
-                                        regN[i] = tileB[dotIdx][threadCol * ${config.TN}u + i];
-                                    }
-
-                                    for(var m = 0u; m < ${config.TM}u; m = m + 1u) {
-                                        for(var n = 0u; n < ${config.TN}u; n = n + 1u) {
-                                            threadResults[m * ${config.TN}u + n] += regM[m] * regN[n];
-                                        }
-                                    }
-                                }
-
-                                workgroupBarrier();
-                            }
-
-                            for(var m = 0u; m < ${config.TM}u; m = m + 1u) {
-                                for(var n = 0u; n < ${config.TN}u; n = n + 1u) {
-                                    let globalRow = blockRowA + threadRow * ${config.TM}u + m;
-                                    let globalCol = blockColB + threadCol * ${config.TN}u + n;
-                                    
-                                    if(globalRow < u32(resultMatrix.size.y) && 
-                                       globalCol < u32(resultMatrix.size.x)) {
-                                        let gmemIdx = globalRow * u32(resultMatrix.size.x) + globalCol;
-                                        resultMatrix.numbers[gmemIdx] = threadResults[m * ${config.TN}u + n];
-                                    }
-                                }
-                            }
-                        }
-                    `;
-
-                    const setupStartTime = performance.now();
-
-                    // Create shader module and pipeline
-                    const shaderModule = device.createShaderModule({ code: shaderCode });
-
-                    // Buffer setup
-                    const resultMatrixBuffer = new Float32Array(MATRIX_SIZE * MATRIX_SIZE);
-
-                    const gpuBufferFirstMatrix = device.createBuffer({
-                        mappedAtCreation: true,
-                        size: firstMatrix.byteLength + 8,
-                        usage: GPUBufferUsage.STORAGE
-                    });
-                    new Float32Array(gpuBufferFirstMatrix.getMappedRange()).set([MATRIX_SIZE, MATRIX_SIZE, ...firstMatrix]);
-                    gpuBufferFirstMatrix.unmap();
-
-                    const gpuBufferSecondMatrix = device.createBuffer({
-                        mappedAtCreation: true,
-                        size: secondMatrix.byteLength + 8,
-                        usage: GPUBufferUsage.STORAGE
-                    });
-                    new Float32Array(gpuBufferSecondMatrix.getMappedRange()).set([MATRIX_SIZE, MATRIX_SIZE, ...secondMatrix]);
-                    gpuBufferSecondMatrix.unmap();
-
-                    const gpuBufferResultMatrix = device.createBuffer({
-                        mappedAtCreation: true,
-                        size: resultMatrixBuffer.byteLength + 8,
-                        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
-                    });
-                    new Float32Array(gpuBufferResultMatrix.getMappedRange()).set([MATRIX_SIZE, MATRIX_SIZE]);
-                    gpuBufferResultMatrix.unmap();
-
-                    const bindGroupLayout = device.createBindGroupLayout({
-                        entries: [
-                            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
-                            { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
-                            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" }}
-                        ]
-                    });
-
-                    const bindGroup = device.createBindGroup({
-                        layout: bindGroupLayout,
-                        entries: [
-                            { binding: 0, resource: { buffer: gpuBufferFirstMatrix }},
-                            { binding: 1, resource: { buffer: gpuBufferSecondMatrix }},
-                            { binding: 2, resource: { buffer: gpuBufferResultMatrix }}
-                        ]
-                    });
-
-                    const pipelineLayout = device.createPipelineLayout({
-                        bindGroupLayouts: [bindGroupLayout]
-                    });
-
-                    const computePipeline = device.createComputePipeline({
-                        layout: pipelineLayout,
-                        compute: {
-                            module: shaderModule,
-                            entryPoint: "main"
-                        }
-                    });
-
-                    const setupEndTime = performance.now();
-
-                    // Kernel execution
-                    const kernelStartTime = performance.now();
-
-                    const commandEncoder = device.createCommandEncoder();
-                    const passEncoder = commandEncoder.beginComputePass();
-                    passEncoder.setPipeline(computePipeline);
-                    passEncoder.setBindGroup(0, bindGroup);
-                    passEncoder.dispatchWorkgroups(
-                        Math.ceil(MATRIX_SIZE / config.BN),
-                        Math.ceil(MATRIX_SIZE / config.BM)
-                    );
-                    passEncoder.end();
-
-                    device.queue.submit([commandEncoder.finish()]);
-
-                    // Wait for GPU to finish
-                    await device.queue.onSubmittedWorkDone();
-                    const kernelEndTime = performance.now();
-                    const kernelTime = kernelEndTime - kernelStartTime;
-
-                    // Check for timeout
-                    if (kernelTime > timeout) {
-                        throw new Error('Kernel execution timeout');
-                    }
-
-                    // Read back results
-                    const gpuReadBuffer = device.createBuffer({
-                        size: resultMatrixBuffer.byteLength + 8,
-                        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
-                    });
-
-                    const readCommandEncoder = device.createCommandEncoder();
-                    readCommandEncoder.copyBufferToBuffer(
-                        gpuBufferResultMatrix, 0,
-                        gpuReadBuffer, 0,
-                        resultMatrixBuffer.byteLength + 8
-                    );
-
-                    device.queue.submit([readCommandEncoder.finish()]);
-
-                    await gpuReadBuffer.mapAsync(GPUMapMode.READ);
-                    const result = new Float32Array(gpuReadBuffer.getMappedRange().slice(8));
-
-                    // Verify results and calculate metrics
-                    const verificationResults = verifyResults(
-                        firstMatrix, 
-                        secondMatrix, 
-                        result, 
-                        MATRIX_SIZE, 
-                        MATRIX_SIZE, 
-                        MATRIX_SIZE
-                    );
-
-                    const setupTime = setupEndTime - setupStartTime;
-                    const gflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, kernelTime);
-
-                    // Clean up
-                    gpuReadBuffer.unmap();
-                    clearTimeout(timeoutId);
-
-                    resolve({
-                        setupTime,
-                        kernelTime,
-                        gflops,
-                        verificationResults
-                    });
-                } catch (error) {
-                    clearTimeout(timeoutId);
-                    reject(error);
-                }
-            });
-        }
-
-        function showVerificationDetails(details, config) {
-            const backdrop = document.getElementById('verificationBackdrop');
-            const modal = document.getElementById('verificationModal');
-            const content = document.getElementById('verificationContent');
-
-            let html = `
-                <h4>Configuration Details:</h4>
-                <p>BM=${config.BM} BN=${config.BN} BK=${config.BK} TM=${config.TM} TN=${config.TN}</p>
-                <table class="modal-table">
-                    <thead>
-                        <tr>
-                            <th>Position</th>
-                            <th>CPU Result</th>
-                            <th>GPU Result</th>
-                            <th>Difference</th>
-                            <th>Status</th>
-                        </tr>
-                    </thead>
-                    <tbody>
+        function createVerificationDetailsElement(result) {
+            const detailsDiv = document.createElement('div');
+            detailsDiv.className = 'verification-details';
+            
+            const { config, verificationResults, kernelTime, gflops } = result;
+            const allCorrect = verificationResults.every(r => r.isCorrect);
+            const avgDiff = verificationResults.reduce((sum, r) => sum + r.diff, 0) / 
+                          verificationResults.length;
+            const maxDiff = Math.max(...verificationResults.map(r => r.diff));
+            
+            const summaryDiv = document.createElement('div');
+            summaryDiv.className = 'verification-summary';
+            summaryDiv.innerHTML = `
+                <h3>Configuration Details:</h3>
+                • Block sizes (BK×BM×BN): ${config.BK}×${config.BM}×${config.BN}
+                • Thread tiles (TM×TN): ${config.TM}×${config.TN}
+                • Kernel time: ${kernelTime.toFixed(2)} ms
+                • Performance: ${gflops.toFixed(2)} GFLOP/s
+                • Verification status: ${allCorrect ? '✓ All correct' : '✗ Some errors'}
+                • Average difference: ${avgDiff.toFixed(6)}
+                • Maximum difference: ${maxDiff.toFixed(6)}
             `;
-
-            details.forEach(detail => {
-                html += `
+            
+            const table = document.createElement('table');
+            table.className = 'verification-table';
+            table.innerHTML = `
+                <tr>
+                    <th>Position</th>
+                    <th>CPU Result</th>
+                    <th>GPU Result</th>
+                    <th>Difference</th>
+                    <th>Status</th>
+                </tr>
+                ${verificationResults.map(vr => `
                     <tr>
-                        <td>[${detail.row}, ${detail.col}]</td>
-                        <td>${detail.cpuResult.toFixed(6)}</td>
-                        <td>${detail.gpuResult.toFixed(6)}</td>
-                        <td>${detail.diff.toFixed(6)}</td>
-                        <td class="${detail.isCorrect ? 'correct' : 'incorrect'}">
-                            ${detail.isCorrect ? '✓' : '✗'}
+                        <td>[${vr.row}, ${vr.col}]</td>
+                        <td>${vr.cpuResult.toFixed(6)}</td>
+                        <td>${vr.gpuResult.toFixed(6)}</td>
+                        <td>${vr.diff.toFixed(6)}</td>
+                        <td class="${vr.isCorrect ? 'correct' : 'incorrect'}">
+                            ${vr.isCorrect ? '✓' : '✗'}
                         </td>
                     </tr>
-                `;
-            });
-
-            html += '</tbody></table>';
-            content.innerHTML = html;
-
-            backdrop.style.display = 'block';
-            modal.style.display = 'block';
+                `).join('')}
+            `;
+            
+            detailsDiv.appendChild(summaryDiv);
+            detailsDiv.appendChild(table);
+            return detailsDiv;
         }
 
-        function hideVerificationDetails() {
-            document.getElementById('verificationBackdrop').style.display = 'none';
-            document.getElementById('verificationModal').style.display = 'none';
-        }
+        async function runConfiguration(config, firstMatrix, secondMatrix) {
+            const { BK, BM, BN, TM, TN } = config;
+            const THREADS_PER_BLOCK = (BM * BN) / (TM * TN);
 
-        async function runTests() {
             if (!navigator.gpu) {
-                document.getElementById('output').textContent = 'WebGPU not supported!';
-                return;
+                throw new Error('WebGPU not supported');
             }
 
             const adapter = await navigator.gpu.requestAdapter();
             if (!adapter) {
-                document.getElementById('output').textContent = 'Failed to get GPU adapter.';
-                return;
+                throw new Error('Failed to get GPU adapter');
             }
             const device = await adapter.requestDevice();
 
+            const shaderModule = device.createShaderModule({
+                code: `
+                    struct Matrix {
+                        size : vec2f,
+                        numbers: array<f32>,
+                    }
+
+                    @group(0) @binding(0) var<storage, read> firstMatrix : Matrix;
+                    @group(0) @binding(1) var<storage, read> secondMatrix : Matrix;
+                    @group(0) @binding(2) var<storage, read_write> resultMatrix : Matrix;
+
+                    var<workgroup> tileA: array<array<f32, ${BK}>, ${BM}>;
+                    var<workgroup> tileB: array<array<f32, ${BN}>, ${BK}>;
+
+                    @compute @workgroup_size(${THREADS_PER_BLOCK})
+                    fn main(
+                        @builtin(global_invocation_id) global_id : vec3<u32>,
+                        @builtin(local_invocation_id) local_id : vec3<u32>,
+                        @builtin(workgroup_id) workgroup_id : vec3<u32>
+                    ) {
+                        let threadCol = local_id.x % (${BN}u / ${TN}u);
+                        let threadRow = local_id.x / (${BN}u / ${TN}u);
+
+                        let innerRowA = local_id.x / ${BK}u;
+                        let innerColA = local_id.x % ${BK}u;
+                        let strideA = ${THREADS_PER_BLOCK}u / ${BK}u;
+                        
+                        let innerRowB = local_id.x / ${BN}u;
+                        let innerColB = local_id.x % ${BN}u;
+                        let strideB = ${THREADS_PER_BLOCK}u / ${BN}u;
+
+                        var threadResults: array<f32, ${TM * TN}>;
+                        for(var i = 0u; i < ${TM * TN}u; i = i + 1u) {
+                            threadResults[i] = 0.0;
+                        }
+
+                        var regM: array<f32, ${TM}>;
+                        var regN: array<f32, ${TN}>;
+
+                        let blockRowA = workgroup_id.y * ${BM}u;
+                        let blockColB = workgroup_id.x * ${BN}u;
+
+                        let K = u32(firstMatrix.size.x);
+                        
+                        for(var bkIdx = 0u; bkIdx < K; bkIdx = bkIdx + ${BK}u) {
+                            for(var i = 0u; i < ${BM}u; i = i + strideA) {
+                                let gmemIdx = (blockRowA + innerRowA + i) * K + bkIdx + innerColA;
+                                if((blockRowA + innerRowA + i) < u32(firstMatrix.size.y) && 
+                                   (bkIdx + innerColA) < K) {
+                                    tileA[innerRowA + i][innerColA] = firstMatrix.numbers[gmemIdx];
+                                } else {
+                                    tileA[innerRowA + i][innerColA] = 0.0;
+                                }
+                            }
+
+                            for(var i = 0u; i < ${BK}u; i = i + strideB) {
+                                let gmemIdx = (bkIdx + innerRowB + i) * u32(secondMatrix.size.x) + 
+                                            blockColB + innerColB;
+                                if((bkIdx + innerRowB + i) < K && 
+                                   (blockColB + innerColB) < u32(secondMatrix.size.x)) {
+                                    tileB[innerRowB + i][innerColB] = secondMatrix.numbers[gmemIdx];
+                                } else {
+                                    tileB[innerRowB + i][innerColB] = 0.0;
+                                }
+                            }
+
+                            workgroupBarrier();
+
+                            for(var dotIdx = 0u; dotIdx < ${BK}u; dotIdx = dotIdx + 1u) {
+                                for(var i = 0u; i < ${TM}u; i = i + 1u) {
+                                    regM[i] = tileA[threadRow * ${TM}u + i][dotIdx];
+                                }
+                                for(var i = 0u; i < ${TN}u; i = i + 1u) {
+                                    regN[i] = tileB[dotIdx][threadCol * ${TN}u + i];
+                                }
+
+                                for(var m = 0u; m < ${TM}u; m = m + 1u) {
+                                    for(var n = 0u; n < ${TN}u; n = n + 1u) {
+                                        threadResults[m * ${TN}u + n] += regM[m] * regN[n];
+                                    }
+                                }
+                            }
+
+                            workgroupBarrier();
+                        }
+
+                        for(var m = 0u; m < ${TM}u; m = m + 1u) {
+                            for(var n = 0u; n < ${TN}u; n = n + 1u) {
+                                let globalRow = blockRowA + threadRow * ${TM}u + m;
+                                let globalCol = blockColB + threadCol * ${TN}u + n;
+                                
+                                if(globalRow < u32(resultMatrix.size.y) && 
+                                   globalCol < u32(resultMatrix.size.x)) {
+                                    let gmemIdx = globalRow * u32(resultMatrix.size.x) + globalCol;
+                                    resultMatrix.numbers[gmemIdx] = threadResults[m * ${TN}u + n];
+                                }
+                            }
+                        }
+                    }
+                `
+            });
+
+            const gpuBufferFirstMatrix = device.createBuffer({
+                mappedAtCreation: true,
+                size: firstMatrix.byteLength + 8,
+                usage: GPUBufferUsage.STORAGE
+            });
+            new Float32Array(gpuBufferFirstMatrix.getMappedRange()).set([MATRIX_SIZE, MATRIX_SIZE, ...firstMatrix]);
+            gpuBufferFirstMatrix.unmap();
+
+            const gpuBufferSecondMatrix = device.createBuffer({
+                mappedAtCreation: true,
+                size: secondMatrix.byteLength + 8,
+                usage: GPUBufferUsage.STORAGE
+            });
+            new Float32Array(gpuBufferSecondMatrix.getMappedRange()).set([MATRIX_SIZE, MATRIX_SIZE, ...secondMatrix]);
+	    gpuBufferSecondMatrix.unmap();
+
+            const resultMatrixBuffer = new Float32Array(MATRIX_SIZE * MATRIX_SIZE);
+            const gpuBufferResultMatrix = device.createBuffer({
+                mappedAtCreation: true,
+                size: resultMatrixBuffer.byteLength + 8,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+            });
+            new Float32Array(gpuBufferResultMatrix.getMappedRange()).set([MATRIX_SIZE, MATRIX_SIZE]);
+            gpuBufferResultMatrix.unmap();
+
+            const bindGroupLayout = device.createBindGroupLayout({
+                entries: [
+                    { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
+                    { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
+                    { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" }}
+                ]
+            });
+
+            const bindGroup = device.createBindGroup({
+                layout: bindGroupLayout,
+                entries: [
+                    { binding: 0, resource: { buffer: gpuBufferFirstMatrix }},
+                    { binding: 1, resource: { buffer: gpuBufferSecondMatrix }},
+                    { binding: 2, resource: { buffer: gpuBufferResultMatrix }}
+                ]
+            });
+
+            const computePipeline = device.createComputePipeline({
+                layout: device.createPipelineLayout({
+                    bindGroupLayouts: [bindGroupLayout]
+                }),
+                compute: {
+                    module: shaderModule,
+                    entryPoint: "main"
+                }
+            });
+
+            const commandEncoder = device.createCommandEncoder();
+            const passEncoder = commandEncoder.beginComputePass();
+            passEncoder.setPipeline(computePipeline);
+            passEncoder.setBindGroup(0, bindGroup);
+            passEncoder.dispatchWorkgroups(
+                Math.ceil(MATRIX_SIZE / BN),
+                Math.ceil(MATRIX_SIZE / BM)
+            );
+            passEncoder.end();
+
+            const startTime = performance.now();
+            device.queue.submit([commandEncoder.finish()]);
+            await device.queue.onSubmittedWorkDone();
+            const endTime = performance.now();
+
+            const gpuReadBuffer = device.createBuffer({
+                size: resultMatrixBuffer.byteLength + 8,
+                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+            });
+
+            const readCommandEncoder = device.createCommandEncoder();
+            readCommandEncoder.copyBufferToBuffer(
+                gpuBufferResultMatrix, 0,
+                gpuReadBuffer, 0,
+                resultMatrixBuffer.byteLength + 8
+            );
+
+            device.queue.submit([readCommandEncoder.finish()]);
+            await gpuReadBuffer.mapAsync(GPUMapMode.READ);
+            const result = new Float32Array(gpuReadBuffer.getMappedRange().slice(8));
+
+            const verificationResults = verifyResults(
+                firstMatrix, 
+                secondMatrix, 
+                result,
+                MATRIX_SIZE,
+                MATRIX_SIZE,
+                MATRIX_SIZE
+            );
+
+            const kernelTime = endTime - startTime;
+            const gflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, kernelTime);
+
+            gpuReadBuffer.unmap();
+
+            return {
+                config,
+                kernelTime,
+                gflops,
+                verificationResults,
+                error: null
+            };
+        }
+
+        async function runAllTests() {
             const output = document.getElementById('output');
-            const progressBar = document.getElementById('progressBar');
-            const currentTest = document.getElementById('currentTest');
-            const resultsTableBody = document.getElementById('resultsTable').getElementsByTagName('tbody')[0];
-            const exportButton = document.getElementById('exportButton');
-            const timeout = parseInt(document.getElementById('timeoutInput').value);
-
             output.textContent = 'Generating matrices...\n';
-            
-            const firstMatrix = generateRandomMatrix(4096);
-            const secondMatrix = generateRandomMatrix(4096);
 
-            const configs = generateConfigurations();
-            document.getElementById('totalConfigs').textContent = configs.length;
+            const firstMatrix = generateRandomMatrix(MATRIX_SIZE);
+            const secondMatrix = generateRandomMatrix(MATRIX_SIZE);
 
-            let completedTests = 0;
-            let skippedTests = 0;
+            output.textContent += 'Starting parameter tuning tests...\n\n';
 
-            output.textContent += `Testing ${configs.length} configurations...\n`;
+            const table = document.createElement('table');
+            table.innerHTML = `
+                <tr>
+                    <th>BK</th>
+                    <th>BM</th>
+                    <th>BN</th>
+                    <th>TM</th>
+                    <th>TN</th>
+                    <th>Threads/Block</th>
+                    <th>Time (ms)</th>
+                    <th>GFLOP/s</th>
+                    <th>Verification</th>
+                </tr>
+            `;
 
-            const results = [];
-            for (const config of configs) {
-                currentTest.textContent = `Testing configuration: BM=${config.BM} BN=${config.BN} BK=${config.BK} TM=${config.TM} TN=${config.TN}`;
-                
+            let bestResult = null;
+            const results = new Map();
+
+            for (const config of configurations) {
                 try {
-                    const result = await testConfiguration(config, firstMatrix, secondMatrix, device, timeout);
+                    output.textContent += `Testing configuration: BK=${config.BK}, BM=${config.BM}, BN=${config.BN}, TM=${config.TM}, TN=${config.TN}\n`;
                     
-                    const row = resultsTableBody.insertRow();
-                    row.classList.add('config-row');
-                    
-                    // Store verification details for later viewing
-                    row.addEventListener('click', () => showVerificationDetails(result.verificationResults.details, config));
+                    const result = await runConfiguration(config, firstMatrix, secondMatrix);
+                    results.set(config, result);
 
+                    const allCorrect = result.verificationResults.every(r => r.isCorrect);
+                    const avgDiff = result.verificationResults.reduce((sum, r) => sum + r.diff, 0) / 
+                                  result.verificationResults.length;
+
+                    if (allCorrect && (!bestResult || result.gflops > bestResult.gflops)) {
+                        bestResult = result;
+                    }
+
+                    const row = table.insertRow();
+                    row.className = 'config-row';
                     row.innerHTML = `
-                        <td>BM=${config.BM} BN=${config.BN} BK=${config.BK}<br>TM=${config.TM} TN=${config.TN}</td>
-                        <td>${config.threadsPerBlock}</td>
-                        <td>${config.numBlocksM}×${config.numBlocksN}</td>
-                        <td>${(config.sharedMemoryBytes / 1024).toFixed(1)} KB</td>
-                        <td>${result.setupTime.toFixed(2)}</td>
+                        <td>${config.BK}</td>
+                        <td>${config.BM}</td>
+                        <td>${config.BN}</td>
+                        <td>${config.TM}</td>
+                        <td>${config.TN}</td>
+                        <td>${(config.BM * config.BN) / (config.TM * config.TN)}</td>
                         <td>${result.kernelTime.toFixed(2)}</td>
                         <td>${result.gflops.toFixed(2)}</td>
-                        <td class="${result.verificationResults.allCorrect ? 'correct' : 'incorrect'}">
-                            ${result.verificationResults.allCorrect ? '✓' : '✗'}
+                        <td class="${allCorrect ? 'correct' : 'incorrect'}">
+                            ${allCorrect ? '✓' : '✗'} (Avg diff: ${avgDiff.toFixed(6)})
                         </td>
                     `;
 
-                    if (result.gflops > 1000) {
-                        row.classList.add('performance-high');
-                    } else if (result.gflops > 500) {
-			    row.classList.add('performance-medium');
-                    } else {
-                        row.classList.add('performance-low');
-                    }
+                    // Create verification details
+                    const verificationDetails = createVerificationDetailsElement(result);
+                    const detailsRow = table.insertRow();
+                    const detailsCell = detailsRow.insertCell();
+                    detailsCell.colSpan = 9;
+                    detailsCell.appendChild(verificationDetails);
 
-                    results.push({
-                        config,
-                        ...result
+                    // Add click handler to show/hide details
+                    row.addEventListener('click', () => {
+                        const isVisible = verificationDetails.style.display === 'block';
+                        verificationDetails.style.display = isVisible ? 'none' : 'block';
                     });
 
-                    completedTests++;
+                    if (result === bestResult) {
+                        row.classList.add('best-result');
+                    }
                 } catch (error) {
-                    console.error('Error testing configuration:', error);
-
-                    const row = resultsTableBody.insertRow();
-                    row.classList.add('performance-skipped');
+                    console.error('Error testing configuration:', config, error);
+                    const row = table.insertRow();
                     row.innerHTML = `
-                        <td>BM=${config.BM} BN=${config.BN} BK=${config.BK}<br>TM=${config.TM} TN=${config.TN}</td>
-                        <td>${config.threadsPerBlock}</td>
-                        <td>${config.numBlocksM}×${config.numBlocksN}</td>
-                        <td>${(config.sharedMemoryBytes / 1024).toFixed(1)} KB</td>
-                        <td>-</td>
-                        <td>-</td>
-                        <td>-</td>
-                        <td class="skipped">Skipped (${error.message})</td>
+                        <td>${config.BK}</td>
+                        <td>${config.BM}</td>
+                        <td>${config.BN}</td>
+                        <td>${config.TM}</td>
+                        <td>${config.TN}</td>
+                        <td>${(config.BM * config.BN) / (config.TM * config.TN)}</td>
+                        <td colspan="3" class="error">Failed: ${error.message}</td>
                     `;
-
-                    skippedTests++;
                 }
-
-                // Update statistics
-                document.getElementById('completedTests').textContent = completedTests;
-                document.getElementById('skippedTests').textContent = skippedTests;
-                document.getElementById('successRate').textContent =
-                    `${((completedTests / (completedTests + skippedTests)) * 100).toFixed(1)}%`;
-
-                progressBar.style.width = `${((completedTests + skippedTests) / configs.length) * 100}%`;
             }
 
-            currentTest.textContent = 'Testing complete!';
-            exportButton.disabled = false;
+            output.appendChild(table);
 
-            // Sort results by GFLOPS
-            results.sort((a, b) => b.gflops - a.gflops);
-
-            output.textContent += '\nTop 5 Configurations:\n';
-            results.slice(0, 5).forEach((result, index) => {
-                output.textContent += `\n${index + 1}. BM=${result.config.BM} BN=${result.config.BN} BK=${result.config.BK} TM=${result.config.TM} TN=${result.config.TN}
-    GFLOP/s: ${result.gflops.toFixed(2)}
-    Kernel Time: ${result.kernelTime.toFixed(2)}ms
-    Verified: ${result.verificationResults.allCorrect ? 'Yes' : 'No'}\n`;
-            });
-
-            // Export functionality
-            exportButton.addEventListener('click', () => {
-                const csv = [
-                    ['Configuration', 'Threads/Block', 'Grid Size', 'Shared Memory',
-                     'Setup Time (ms)', 'Kernel Time (ms)', 'GFLOP/s', 'Verified'],
-                    ...results.map(r => [
-                        `BM=${r.config.BM} BN=${r.config.BN} BK=${r.config.BK} TM=${r.config.TM} TN=${r.config.TN}`,
-                        r.config.threadsPerBlock,
-                        `${r.config.numBlocksM}×${r.config.numBlocksN}`,
-                        `${(r.config.sharedMemoryBytes / 1024).toFixed(1)} KB`,
-                        r.setupTime.toFixed(2),
-                        r.kernelTime.toFixed(2),
-                        r.gflops.toFixed(2),
-                        r.verificationResults.allCorrect ? 'Yes' : 'No'
-                    ])
-                ].map(row => row.join(',')).join('\n');
-
-                const blob = new Blob([csv], { type: 'text/csv' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'matmul_results.csv';
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
-            });
+            if (bestResult) {
+                const summary = document.createElement('div');
+                summary.className = 'stats';
+                summary.innerHTML = `
+                    Best configuration (✓ verified correct):
+                    • BK=${bestResult.config.BK}, BM=${bestResult.config.BM}, BN=${bestResult.config.BN}
+                    • TM=${bestResult.config.TM}, TN=${bestResult.config.TN}
+                    • Threads per block: ${(bestResult.config.BM * bestResult.config.BN) / 
+                                        (bestResult.config.TM * bestResult.config.TN)}
+                    • Performance: ${bestResult.gflops.toFixed(2)} GFLOP/s
+                    • Kernel time: ${bestResult.kernelTime.toFixed(2)} ms
+                `;
+                output.appendChild(summary);
+            }
         }
 
-        // Event Listeners
-        document.getElementById('startButton').addEventListener('click', async () => {
-            document.getElementById('startButton').disabled = true;
-            await runTests();
-        });
-
-        document.getElementById('verificationBackdrop').addEventListener('click', hideVerificationDetails);
-        document.querySelector('.modal-close').addEventListener('click', hideVerificationDetails);
-
-        // Initialize stats
-        document.getElementById('totalConfigs').textContent = generateConfigurations().length;
+        if (navigator.gpu) {
+            runAllTests().catch(error => {
+                const output = document.getElementById('output');
+                output.textContent = `Error: ${error.message}`;
+                console.error(error);
+            });
+        } else {
+            const output = document.getElementById('output');
+            output.textContent = 'WebGPU is not supported in your browser. Please use a WebGPU-enabled browser.';
+        }
     </script>
 </body>
 </html>
