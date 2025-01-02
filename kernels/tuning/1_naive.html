@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebGPU Matrix Multiplication - Block Size Comparison</title>
+    <style>
+        #output { 
+            font-family: monospace; 
+            white-space: pre; 
+            margin: 20px; 
+            font-size: 14px;
+        }
+        .correct { color: green; }
+        .incorrect { color: red; }
+        .performance { 
+            margin-top: 20px;
+            font-weight: bold;
+            color: #0066cc;
+        }
+        .stats {
+            margin-top: 10px;
+            color: #666;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+        }
+        .gflops {
+            color: #0066cc;
+            font-weight: bold;
+        }
+        .result-entry {
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+        }
+        hr {
+            border: none;
+            border-top: 1px solid #ddd;
+            margin: 10px 0;
+        }
+        .configuration-header {
+            font-weight: bold;
+            margin-top: 20px;
+            color: #333;
+        }
+        .test-progress {
+            color: #666;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <h1>WebGPU Matrix Multiplication - Block Size Comparison</h1>
+    <div id="output"></div>
+    <script type="text/javascript">
+        // All possible block dimension combinations that don't exceed 256 threads
+        const blockConfigurations = [
+            [1, 1], [1, 2], [2, 1], [2, 2], [2, 4], [4, 2],
+            [4, 4], [4, 8], [8, 4], [8, 8], [8, 16], [16, 8],
+            [16, 16], [32, 4], [4, 32], [32, 8], [8, 32],
+            [64, 2], [2, 64], [64, 4], [4, 64], [128, 2], [2, 128],
+            [256, 1], [1, 256]
+        ];
+
+        const MATRIX_SIZE = 4096;
+
+        function calculateGFLOPs(M, N, K, timeInMs) {
+            const operations = 2n * BigInt(M) * BigInt(N) * BigInt(K);
+            const timeInSeconds = timeInMs / 1000;
+            const gflops = Number(operations) / (timeInSeconds * 1e9);
+            return gflops;
+        }
+
+        function generateRandomMatrix(size) {
+            const matrix = new Float32Array(size * size);
+            for (let i = 0; i < matrix.length; i++) {
+                matrix[i] = Math.random() * 2 - 1;
+            }
+            return matrix;
+        }
+
+        function getCPUResult(firstMatrix, secondMatrix, M, N, K, row, col) {
+            let sum = 0;
+            for (let k = 0; k < K; k++) {
+                sum += firstMatrix[row * K + k] * secondMatrix[k * N + col];
+            }
+            return sum;
+        }
+
+        function verifyResults(firstMatrix, secondMatrix, gpuResult, M, N, K) {
+            const results = [];
+            const numChecks = 50;
+            
+            const positions = new Set();
+            while(positions.size < numChecks) {
+                const row = Math.floor(Math.random() * M);
+                const col = Math.floor(Math.random() * N);
+                positions.add(`${row},${col}`);
+            }
+            
+            for(const pos of positions) {
+                const [row, col] = pos.split(',').map(Number);
+                const cpuResult = getCPUResult(firstMatrix, secondMatrix, M, N, K, row, col);
+                const gpuResultVal = gpuResult[row * N + col];
+                const diff = Math.abs(cpuResult - gpuResultVal);
+                const isCorrect = diff < 0.01;
+                
+                results.push({
+                    row,
+                    col,
+                    cpuResult,
+                    gpuResult: gpuResultVal,
+                    isCorrect,
+                    diff
+                });
+            }
+
+            return results;
+        }
+
+        async function runMatrixMultiplication(blockDimX, blockDimY) {
+            const output = document.getElementById('output');
+            
+            if (!navigator.gpu) {
+                throw new Error('WebGPU not supported!');
+            }
+
+            const adapter = await navigator.gpu.requestAdapter();
+            if (!adapter) {
+                throw new Error('Failed to get GPU adapter.');
+            }
+            const device = await adapter.requestDevice();
+
+            const shaderModule = device.createShaderModule({
+                code: `
+                    override BLOCK_DIM_X: u32;
+                    override BLOCK_DIM_Y: u32;
+                    
+                    struct Matrix {
+                        size : vec2u,
+                        numbers : array<f32>,
+                    }
+                    
+                    struct Uniforms {
+                        M : u32,
+                        N : u32,
+                        K : u32,
+                        alpha : f32,
+                        beta : f32,
+                    }
+                    
+                    @group(0) @binding(0) var<storage, read> A : Matrix;
+                    @group(0) @binding(1) var<storage, read> B : Matrix;
+                    @group(0) @binding(2) var<storage, read_write> C : Matrix;
+                    @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+                    
+                    @compute @workgroup_size(BLOCK_DIM_X, BLOCK_DIM_Y)
+                    fn main(
+                        @builtin(workgroup_id) blockIdx : vec3<u32>,
+                        @builtin(local_invocation_id) threadIdx : vec3<u32>
+                    ) {
+                        let x = blockIdx.x * BLOCK_DIM_X + threadIdx.x;
+                        let y = blockIdx.y * BLOCK_DIM_Y + threadIdx.y;
+                    
+                        if (x < uniforms.M && y < uniforms.N) {
+                            var tmp: f32 = 0.0;
+                    
+                            for (var i: u32 = 0u; i < uniforms.K; i = i + 1u) {
+                                tmp = tmp + A.numbers[x * uniforms.K + i] * B.numbers[i * uniforms.N + y];
+                            }
+                    
+                            let idx = x * uniforms.N + y;
+                            C.numbers[idx] = uniforms.alpha * tmp + uniforms.beta * C.numbers[idx];
+                        }
+                    }
+                `
+            });
+
+            const alpha = 1.0;
+            const beta = 0.0;
+            const firstMatrix = generateRandomMatrix(MATRIX_SIZE);
+            const secondMatrix = generateRandomMatrix(MATRIX_SIZE);
+            const resultMatrixBuffer = new Float32Array(MATRIX_SIZE * MATRIX_SIZE);
+
+            // Create and initialize GPU buffers
+            const gpuBufferFirstMatrix = device.createBuffer({
+                mappedAtCreation: true,
+                size: firstMatrix.byteLength + 8,
+                usage: GPUBufferUsage.STORAGE
+            });
+            new Float32Array(gpuBufferFirstMatrix.getMappedRange()).set([MATRIX_SIZE, MATRIX_SIZE, ...firstMatrix]);
+            gpuBufferFirstMatrix.unmap();
+
+            const gpuBufferSecondMatrix = device.createBuffer({
+                mappedAtCreation: true,
+                size: secondMatrix.byteLength + 8,
+                usage: GPUBufferUsage.STORAGE
+            });
+            new Float32Array(gpuBufferSecondMatrix.getMappedRange()).set([MATRIX_SIZE, MATRIX_SIZE, ...secondMatrix]);
+            gpuBufferSecondMatrix.unmap();
+
+            const gpuBufferResultMatrix = device.createBuffer({
+                mappedAtCreation: true,
+                size: resultMatrixBuffer.byteLength + 8,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+            });
+            new Float32Array(gpuBufferResultMatrix.getMappedRange()).set([MATRIX_SIZE, MATRIX_SIZE]);
+            gpuBufferResultMatrix.unmap();
+
+            const uniformBuffer = device.createBuffer({
+                size: 20,
+                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+            });
+            device.queue.writeBuffer(
+                uniformBuffer, 
+                0, 
+                new Uint32Array([MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE])
+            );
+            device.queue.writeBuffer(
+                uniformBuffer, 
+                12,
+                new Float32Array([alpha, beta])
+            );
+
+            const bindGroupLayout = device.createBindGroupLayout({
+                entries: [
+                    { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
+                    { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
+                    { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" }},
+                    { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" }}
+                ]
+            });
+
+            const bindGroup = device.createBindGroup({
+                layout: bindGroupLayout,
+                entries: [
+                    { binding: 0, resource: { buffer: gpuBufferFirstMatrix }},
+                    { binding: 1, resource: { buffer: gpuBufferSecondMatrix }},
+                    { binding: 2, resource: { buffer: gpuBufferResultMatrix }},
+                    { binding: 3, resource: { buffer: uniformBuffer }}
+                ]
+            });
+
+            const pipelineLayout = device.createPipelineLayout({
+                bindGroupLayouts: [bindGroupLayout]
+            });
+
+            const computePipeline = device.createComputePipeline({
+                layout: pipelineLayout,
+                compute: {
+                    module: shaderModule,
+                    entryPoint: "main",
+                    constants: {
+                        BLOCK_DIM_X: blockDimX,
+                        BLOCK_DIM_Y: blockDimY
+                    }
+                }
+            });
+
+            const commandEncoder = device.createCommandEncoder();
+            const passEncoder = commandEncoder.beginComputePass();
+            passEncoder.setPipeline(computePipeline);
+            passEncoder.setBindGroup(0, bindGroup);
+
+            const gridDimX = Math.ceil(MATRIX_SIZE / blockDimX);
+            const gridDimY = Math.ceil(MATRIX_SIZE / blockDimY);
+            passEncoder.dispatchWorkgroups(gridDimX, gridDimY);
+            passEncoder.end();
+
+            const startTime = performance.now();
+            device.queue.submit([commandEncoder.finish()]);
+            await device.queue.onSubmittedWorkDone();
+            const kernelTime = performance.now() - startTime;
+
+            const gpuReadBuffer = device.createBuffer({
+                size: resultMatrixBuffer.byteLength + 8,
+                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+            });
+
+            const readCommandEncoder = device.createCommandEncoder();
+            readCommandEncoder.copyBufferToBuffer(
+                gpuBufferResultMatrix, 0,
+                gpuReadBuffer, 0,
+                resultMatrixBuffer.byteLength + 8
+            );
+
+            device.queue.submit([readCommandEncoder.finish()]);
+
+            await gpuReadBuffer.mapAsync(GPUMapMode.READ);
+            const result = new Float32Array(gpuReadBuffer.getMappedRange().slice(8));
+
+            const verificationResults = verifyResults(
+                firstMatrix, 
+                secondMatrix, 
+                result,
+                MATRIX_SIZE,
+                MATRIX_SIZE,
+                MATRIX_SIZE
+            );
+
+            let allCorrect = true;
+            let maxDiff = 0;
+            let avgDiff = 0;
+
+            for (const check of verificationResults) {
+                maxDiff = Math.max(maxDiff, check.diff);
+                avgDiff += check.diff;
+                if (!check.isCorrect) allCorrect = false;
+            }
+
+            avgDiff /= verificationResults.length;
+            const gflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, kernelTime);
+
+            gpuReadBuffer.unmap();
+
+            return {
+                kernelTime,
+                gflops,
+                allCorrect,
+                maxDiff,
+                avgDiff,
+                gridDimX,
+                gridDimY
+            };
+        }
+
+        async function testAllConfigurations() {
+            const output = document.getElementById('output');
+            output.textContent = 'Testing all block dimension configurations...\n\n';
+            
+            const results = [];
+            
+            for (const [dimX, dimY] of blockConfigurations) {
+                output.textContent += `Testing ${dimX}x${dimY}...\n`;
+                
+                try {
+                    const result = await runMatrixMultiplication(dimX, dimY);
+                    results.push({
+                        dimX,
+                        dimY,
+                        ...result
+                    });
+                    
+                    output.textContent += `✓ ${dimX}x${dimY}: ${result.gflops.toFixed(2)} GFLOP/s\n`;
+                } catch (error) {
+                    output.textContent += `✗ ${dimX}x${dimY}: Failed - ${error.message}\n`;
+                }
+            }
+            
+            results.sort((a, b) => b.gflops - a.gflops);
+            
+            const summaryDiv = document.createElement('div');
+            summaryDiv.className = 'stats';
+            summaryDiv.innerHTML = '<h2>Results Summary (Sorted by Performance)</h2>\n';
+            
+            for (const result of results) {
+                summaryDiv.innerHTML += `
+                    <div class="result-entry">
+                        Block Size: ${result.dimX}x${result.dimY} (${result.dimX * result.dimY} threads)<br>
+                        Grid Size: ${result.gridDimX}x${result.gridDimY}<br>
+                        Performance: <span class="gflops">${result.gflops.toFixed(2)} GFLOP/s</span><br>
+                        Kernel Time: ${result.kernelTime.toFixed(2)}ms<br>
+                        Verification: ${result.allCorrect ? '<span class="correct">PASSED</span>' : '<span class="incorrect">FAILED</span>'}<br>
+                        Max Error: ${result.maxDiff.toFixed(6)}<br>
+                        Avg Error: ${result.avgDiff.toFixed(6)}<br>
+                        <hr>
+                    </div>
+                `;
+            }
+            
+            output.appendChild(summaryDiv);
+        }
+
+        testAllConfigurations();
+    </script>
+</body>
+</html>
