@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>WebGPU Matrix Multiplication - CUDA Block Tiling Implementation</title>
+    <title>WebGPU Matrix Multiplication - CUDA Coalesced Memory Access</title>
     <style>
         #output { 
             font-family: monospace; 
@@ -14,6 +14,7 @@
         .performance { 
             margin-top: 20px;
             font-weight: bold;
+            color: #0066cc;
         }
         .stats {
             margin-top: 10px;
@@ -22,18 +23,19 @@
             background-color: #f8f9fa;
             border-radius: 4px;
         }
+        .gflops {
+            color: #0066cc;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
-    <h1>WebGPU Matrix Multiplication - CUDA Block Tiling Implementation</h1>
+    <h1>WebGPU Matrix Multiplication - CUDA Coalesced Memory Access</h1>
     <div id="output"></div>
     <script type="text/javascript">
-        // Following CUDA implementation but adjusted for WebGPU limits
-        const BM = 32;  // Block tile size M (reduced from 64 for WebGPU)
-        const BN = 32;  // Block tile size N (reduced from 64 for WebGPU)
-        const BK = 8;   // Block tile size K
-        const TM = 4;   // Thread tile size M (reduced from 8 for WebGPU)
-        const WORKGROUP_SIZE = (BM * BK);  // Must satisfy CUDA's assertions
+        // Following CUDA implementation block size
+        const BLOCK_SIZE = 16;  // Reduced from 32 to meet WebGPU limits
+        const WORKGROUP_SIZE = BLOCK_SIZE * BLOCK_SIZE; // 256 threads
         const MATRIX_SIZE = 4096;
 
         function calculateGFLOPs(M, N, K, timeInMs) {
@@ -105,6 +107,56 @@
             }
             const device = await adapter.requestDevice();
 
+            // WGSL shader following CUDA coalesced implementation
+            const shaderModule = device.createShaderModule({
+                code: `
+                    const BLOCK_SIZE = 16u;
+                    const WORKGROUP_SIZE = 256u;  // BLOCK_SIZE * BLOCK_SIZE
+                    
+                    struct Matrix {
+                        size : vec2u,
+                        numbers : array<f32>,
+                    };
+                    
+                    struct Uniforms {
+                        M : u32,
+                        N : u32,
+                        K : u32,
+                        alpha : f32,
+                        beta : f32,
+                    };
+                    
+                    @group(0) @binding(0) var<storage, read> A : Matrix;
+                    @group(0) @binding(1) var<storage, read> B : Matrix;
+                    @group(0) @binding(2) var<storage, read_write> C : Matrix;
+                    @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+                    
+                    @compute @workgroup_size(256)
+                    fn main(
+                        @builtin(workgroup_id) blockIdx : vec3<u32>,
+                        @builtin(local_invocation_id) threadIdx : vec3<u32>
+                    ) {
+                        // Calculate row and column indices following CUDA pattern
+                        let cRow = blockIdx.x * BLOCK_SIZE + (threadIdx.x / BLOCK_SIZE);
+                        let cCol = blockIdx.y * BLOCK_SIZE + (threadIdx.x % BLOCK_SIZE);
+                    
+                        // Ensure we stay within the matrix bounds
+                        if (cRow < uniforms.M && cCol < uniforms.N) {
+                            var tmp: f32 = 0.0;
+                    
+                            // Accumulate matrix multiplication results
+                            for (var i: u32 = 0u; i < uniforms.K; i = i + 1u) {
+                                tmp = tmp + A.numbers[cRow * uniforms.K + i] * B.numbers[i * uniforms.N + cCol];
+                            }
+                    
+                            // Compute final result for C with scaling
+                            let idx = cRow * uniforms.N + cCol;
+                            C.numbers[idx] = uniforms.alpha * tmp + uniforms.beta * C.numbers[idx];
+                        }
+                    }
+                `
+            });
+
             output.textContent = 'Generating random matrices...\n';
             const genStartTime = performance.now();
             
@@ -119,96 +171,6 @@
             output.textContent += 'Starting computation...\n';
 
             const setupStartTime = performance.now();
-
-            // WGSL shader following CUDA block tiling implementation
-            const shaderModule = device.createShaderModule({
-                code: `
-                    struct Matrix {
-                        size : vec2u,
-                        numbers : array<f32>,
-                    }
-                    
-                    struct Uniforms {
-                        M : u32,
-                        N : u32,
-                        K : u32,
-                        alpha : f32,
-                        beta : f32,
-                    }
-                    
-                    @group(0) @binding(0) var<storage, read> A : Matrix;
-                    @group(0) @binding(1) var<storage, read> B : Matrix;
-                    @group(0) @binding(2) var<storage, read_write> C : Matrix;
-                    @group(0) @binding(3) var<uniform> uniforms : Uniforms;
-                    
-                    const BM = ${BM}u;
-                    const BN = ${BN}u;
-                    const BK = ${BK}u;
-                    const TM = ${TM}u;
-                    
-                    var<workgroup> As: array<f32, ${BM * BK}>;
-                    var<workgroup> Bs: array<f32, ${BK * BN}>;
-                    
-                    @compute @workgroup_size(${WORKGROUP_SIZE})
-                    fn main(
-                        @builtin(workgroup_id) blockIdx : vec3<u32>,
-                        @builtin(local_invocation_id) threadIdx : vec3<u32>,
-                    ) {
-                        // Following CUDA thread and block organization
-                        let cRow = blockIdx.y;
-                        let cCol = blockIdx.x;
-                        
-                        let threadCol = threadIdx.x % BN;
-                        let threadRow = threadIdx.x / BN;
-                        
-                        let innerColA = threadIdx.x % BK;
-                        let innerRowA = threadIdx.x / BK;
-                        let innerColB = threadIdx.x % BN;
-                        let innerRowB = threadIdx.x / BN;
-                        
-                        // Initialize pointers as in CUDA
-                        var aPtr = cRow * BM * uniforms.K;
-                        var bPtr = cCol * BN;
-                        let cPtr = cRow * BM * uniforms.N + cCol * BN;
-                        
-                        var threadResults: array<f32, TM>;
-                        for(var i = 0u; i < TM; i++) {
-                            threadResults[i] = 0.0;
-                        }
-                        
-                        // Main computation loop matching CUDA
-                        for(var bkIdx: u32 = 0u; bkIdx < uniforms.K; bkIdx += BK) {
-                            // Load to shared memory with same pattern as CUDA
-                            As[innerRowA * BK + innerColA] = A.numbers[aPtr + innerRowA * uniforms.K + innerColA];
-                            Bs[innerRowB * BN + innerColB] = B.numbers[bPtr + innerRowB * uniforms.N + innerColB];
-                            
-                            workgroupBarrier();
-                            
-                            // Advance blocktile as in CUDA
-                            aPtr = aPtr + BK;
-                            bPtr = bPtr + BK * uniforms.N;
-                            
-                            // Compute using same organization as CUDA
-                            for(var dotIdx: u32 = 0u; dotIdx < BK; dotIdx++) {
-                                let tmpB = Bs[dotIdx * BN + threadCol];
-                                for(var resIdx: u32 = 0u; resIdx < TM; resIdx++) {
-                                    threadResults[resIdx] += 
-                                        As[(threadRow * TM + resIdx) * BK + dotIdx] * tmpB;
-                                }
-                            }
-                            
-                            workgroupBarrier();
-                        }
-                        
-                        // Write results with same indexing as CUDA
-                        for(var resIdx: u32 = 0u; resIdx < TM; resIdx++) {
-                            let cIndex = cPtr + (threadRow * TM + resIdx) * uniforms.N + threadCol;
-                            C.numbers[cIndex] = uniforms.alpha * threadResults[resIdx] + 
-                                              uniforms.beta * C.numbers[cIndex];
-                        }
-                    }
-                `
-            });
 
             // Create and initialize GPU buffers
             const gpuBufferFirstMatrix = device.createBuffer({
@@ -293,9 +255,9 @@
             passEncoder.setPipeline(computePipeline);
             passEncoder.setBindGroup(0, bindGroup);
 
-            // Following CUDA grid dimension calculation: CEIL_DIV(N, BN), CEIL_DIV(M, BM)
-            const gridDimX = Math.ceil(MATRIX_SIZE / BN);
-            const gridDimY = Math.ceil(MATRIX_SIZE / BM);
+            // Following CUDA grid dimension calculation
+            const gridDimX = Math.ceil(MATRIX_SIZE / BLOCK_SIZE);
+            const gridDimY = Math.ceil(MATRIX_SIZE / BLOCK_SIZE);
             passEncoder.dispatchWorkgroups(gridDimX, gridDimY, 1);
             passEncoder.end();
 
@@ -335,8 +297,7 @@
             statsDiv.innerHTML = `
 Configuration:
 • Matrix Size: ${MATRIX_SIZE}x${MATRIX_SIZE}
-• Block dimensions (BM, BN, BK): ${BM}x${BN}x${BK}
-• Thread tile size (TM): ${TM}
+• Block Size: ${BLOCK_SIZE}
 • Workgroup Size: ${WORKGROUP_SIZE}
 • Grid dimensions: ${gridDimX}x${gridDimY}
 
@@ -403,7 +364,7 @@ Verification Statistics:
             summarySpan.className = allCorrect ? 'correct' : 'incorrect';
             output.appendChild(summarySpan);
 
-            const perfSpan = document.createElement('div');
+	    const perfSpan = document.createElement('div');
             perfSpan.className = 'performance';
             perfSpan.textContent = `\nKernel execution time: ${kernelTime.toFixed(2)}ms`;
             output.appendChild(perfSpan);
