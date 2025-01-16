@@ -1,0 +1,1335 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>GEMMStore</title>
+    <style>
+        /* All original CSS styles from the original code */
+        body {
+            margin: 0;
+            padding: 0;
+            background: #f5f5f5;
+            font-family: Arial, sans-serif;
+        }
+
+        .header-container {
+            background: linear-gradient(135deg, #1a237e, #0d47a1);
+            padding: 2.5rem;
+            text-align: center;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+            position: relative;
+            overflow: hidden;
+            margin-bottom: 2rem;
+        }
+        
+        .store-title {
+            font-family: Arial, 'Trebuchet MS', sans-serif;
+            font-size: 4.2rem;
+            color: #fff;
+            margin: 0;
+            letter-spacing: 4px;
+            font-weight: 900;
+            position: relative;
+            z-index: 2;
+            text-shadow: 2px 4px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        .content-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .device-info {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            margin-bottom: 2rem;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .device-info h2 {
+            margin: 0 0 1rem 0;
+            color: #1a237e;
+            font-size: 1.5rem;
+        }
+
+        .matrix-controls {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            margin-bottom: 2rem;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .matrix-controls h2 {
+            margin: 0 0 1rem 0;
+            color: #1a237e;
+            font-size: 1.5rem;
+        }
+
+        .matrix-explanation {
+            background: #f8f9fa;
+            padding: 1rem 1.5rem;
+            border-radius: 6px;
+            margin-bottom: 1.5rem;
+            border-left: 4px solid #0d47a1;
+        }
+
+        .matrix-explanation p {
+            margin: 0.5rem 0;
+            color: #444;
+            font-size: 0.95rem;
+            line-height: 1.4;
+        }
+
+        .matrix-explanation p:first-child {
+            font-weight: bold;
+            margin-bottom: 0.8rem;
+            color: #1a237e;
+        }
+
+        .slider-container {
+            margin-bottom: 2.5rem;
+            padding: 0 10px;
+        }
+
+        .slider-label {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+            font-size: 1.2rem;
+            font-weight: bold;
+        }
+
+        .slider-label label {
+            font-weight: bold;
+            color: #333;
+            font-size: 1.2rem;
+        }
+
+        .slider-label span {
+            font-weight: bold;
+            color: #0d47a1;
+            font-size: 1.5rem;
+            background: #e8eaf6;
+            padding: 0.3rem 0.8rem;
+            border-radius: 6px;
+            min-width: 80px;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .slider-wrapper {
+            position: relative;
+            padding-bottom: 30px;
+            margin: 0;
+            width: calc(100% - 16px);
+            margin-left: 8px;
+        }
+
+        .slider {
+            position: relative;
+            width: 100%;
+            height: 5px;
+            background: #e0e0e0;
+            outline: none;
+            -webkit-appearance: none;
+            border-radius: 5px;
+            margin: 10px 0 20px 0;
+            padding: 0;
+        }
+
+        .slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            background: #0d47a1;
+            cursor: pointer;
+            border-radius: 50%;
+            transition: background 0.2s;
+            border: 2px solid white;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            margin-top: -5.5px;
+        }
+
+        .slider::-webkit-slider-thumb:hover {
+            background: #1565c0;
+        }
+
+        .slider-ticks {
+            position: absolute;
+            width: 100%;
+            height: 20px;
+            display: flex;
+            justify-content: space-between;
+            padding: 0;
+            pointer-events: none;
+            margin-top: -10px;
+            left: 0;
+        }
+
+        .tick {
+            position: relative;
+            width: 2px;
+            height: 10px;
+            background: #999;
+            margin-top: 10px;
+        }
+
+        .tick-label {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%) scale(0.9);
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: #666;
+            white-space: nowrap;
+            transition: transform 0.2s, color 0.2s;
+        }
+
+        .tick-label:hover {
+            transform: translateX(-50%) scale(1);
+            color: #0d47a1;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 2rem;
+            margin-bottom: 2rem;
+            justify-content: space-between;
+            align-items: center;
+            background: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .action-btn {
+            padding: 0.8rem 1.5rem;
+            border: none;
+            border-radius: 6px;
+            font-weight: bold;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            min-width: 140px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            flex: 1;
+        }
+
+        .iterations-control {
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+            background: #f8f9fa;
+            padding: 0.5rem 1.2rem;
+            border-radius: 6px;
+            font-weight: bold;
+            min-width: 180px;
+            justify-content: center;
+            flex: 1;
+        }
+
+        .iterations-input {
+            width: 60px;
+            padding: 0.4rem;
+            border: 2px solid #0d47a1;
+            border-radius: 4px;
+            font-size: 1rem;
+            font-weight: bold;
+            text-align: center;
+            color: #0d47a1;
+            background: white;
+        }
+
+        .iterations-input:focus {
+            outline: none;
+            border-color: #1565c0;
+            box-shadow: 0 0 0 2px rgba(13, 71, 161, 0.1);
+        }
+
+        .default-btn {
+            background: #e3f2fd;
+            color: #1565c0;
+        }
+
+        .default-btn:hover {
+            background: #bbdefb;
+        }
+
+        .reset-btn {
+            background: #fafafa;
+            color: #424242;
+        }
+
+        .reset-btn:hover {
+            background: #eeeeee;
+        }
+
+        .run-btn {
+            background: #0d47a1;
+            color: white;
+        }
+
+        .run-btn:hover {
+            background: #1565c0;
+        }
+
+        .download-btn {
+            background: #4caf50;
+            color: white;
+        }
+
+        .download-btn:hover {
+            background: #43a047;
+        }
+
+        .action-btn:active {
+            transform: scale(0.98);
+        }
+
+        .table-header {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1rem;
+            padding: 1rem;
+            background: #0d47a1;
+            color: white;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            font-weight: bold;
+            text-align: center;
+        }
+
+        .table-row {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1rem;
+            padding: 1rem;
+            background: white;
+            border-radius: 8px;
+            margin-bottom: 0.5rem;
+            transition: transform 0.2s, box-shadow 0.2s;
+            text-align: center;
+            cursor: pointer;
+        }
+
+        .table-row:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        .shine {
+            position: relative;
+            display: inline-block;
+        }
+        
+        .shine::after {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(
+                45deg,
+                transparent 45%,
+                rgba(255, 255, 255, 0.15) 48%,
+                rgba(255, 255, 255, 0.4) 50%,
+                rgba(255, 255, 255, 0.15) 52%,
+                transparent 55%
+            );
+            transform: rotate(45deg);
+            animation: shine 4s ease-in-out infinite;
+        }
+
+        .cell {
+            padding: 0.5rem;
+        }
+
+        .verified-cell {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+
+        .not-verified-cell {
+            color: #f44336;
+            font-weight: bold;
+        }
+
+        .kernel-details-panel {
+            background: white;
+            margin: -0.5rem 0 1rem 0;
+            border-radius: 0 0 8px 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            padding: 1rem;
+            animation: slideDown 0.2s ease-out;
+        }
+
+        .details-content {
+            padding: 1rem;
+            background: #f8f9fa;
+            border-radius: 6px;
+        }
+
+        .details-section {
+            margin-bottom: 1rem;
+            background: white;
+            padding: 1rem;
+            border-radius: 6px;
+        }
+
+        .details-section h4 {
+            color: #1a237e;
+            margin: 0 0 0.8rem 0;
+        }
+
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .result-item {
+            background: #f8f9fa;
+            padding: 0.8rem;
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+
+        .result-item.best {
+            background: #e3f2fd;
+            border: 1px solid #1565c0;
+        }
+
+        .close-btn {
+            margin-top: 1rem;
+            padding: 0.5rem 1rem;
+            background: #e3f2fd;
+            border: none;
+            border-radius: 4px;
+            color: #1565c0;
+            cursor: pointer;
+        }
+
+        .close-btn:hover {
+            background: #bbdefb;
+        }
+
+        @keyframes shine {
+            0% { transform: translateX(-100%) rotate(45deg); }
+            100% { transform: translateX(100%) rotate(45deg); }
+        }
+
+        @keyframes slideDown {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+    <div class="header-container">
+        <h1 class="store-title shine">GEMMStore</h1>
+    </div>
+
+    <div class="content-container">
+        <div class="device-info">
+            <h2>Device Information</h2>
+            <p id="device-info">Detecting GPU device...</p>
+        </div>
+
+        <div class="matrix-controls">
+            <h2>Matrix Dimensions</h2>
+            <div class="matrix-explanation">
+                <p>Select matrix sizes for multiplication: C = A × B</p>
+                <p>• Matrix A has dimensions M × K</p>
+                <p>• Matrix B has dimensions K × N</p>
+                <p>• Result Matrix C has dimensions M × N</p>
+            </div>
+
+            <div class="slider-container">
+                <div class="slider-label">
+                    <label for="m-slider">M Dimension:</label>
+                    <span id="m-value">1024</span>
+                </div>
+                <div class="slider-wrapper">
+                    <input type="range" min="0" max="9" value="7" class="slider" id="m-slider"
+                           oninput="updateSliderValue('m-slider', 'm-value')">
+                    <div class="slider-ticks" id="m-slider-ticks"></div>
+                </div>
+            </div>
+
+            <div class="slider-container">
+                <div class="slider-label">
+                    <label for="n-slider">N Dimension:</label>
+                    <span id="n-value">1024</span>
+                </div>
+                <div class="slider-wrapper">
+                    <input type="range" min="0" max="9" value="7" class="slider" id="n-slider"
+                           oninput="updateSliderValue('n-slider', 'n-value')">
+                    <div class="slider-ticks" id="n-slider-ticks"></div>
+                </div>
+            </div>
+
+            <div class="slider-container">
+                <div class="slider-label">
+                    <label for="k-slider">K Dimension:</label>
+                    <span id="k-value">1024</span>
+                </div>
+                <div class="slider-wrapper">
+                    <input type="range" min="0" max="9" value="7" class="slider" id="k-slider" oninput="updateSliderValue('k-slider', 'k-value')">
+                    <div class="slider-ticks" id="k-slider-ticks"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="action-buttons">
+            <button class="action-btn default-btn" onclick="setDefaultValues()">Default</button>
+            <button class="action-btn reset-btn" onclick="resetValues()">Reset</button>
+            <div class="iterations-control">
+                <label for="iterations">Iterations:</label>
+                <input type="number" id="iterations" value="16" min="1" max="100" class="iterations-input">
+            </div>
+            <button class="action-btn run-btn" onclick="runKernels()">Run Kernels</button>
+            <button class="action-btn download-btn" onclick="downloadResults()">Download Results</button>
+        </div>
+
+        <div class="table-header">
+            <div class="cell">Kernels</div>
+            <div class="cell">Execution Time</div>
+            <div class="cell">GFLOPs</div>
+            <div class="cell">Verified</div>
+        </div>
+
+        <div id="results-container">
+            <div class="table-row" id="naive-row">
+                <div class="cell">Naive</div>
+                <div class="cell">-</div>
+                <div class="cell">-</div>
+                <div class="cell verified-cell">✓</div>
+            </div>
+
+            <div class="table-row">
+                <div class="cell">GMEM Coalescing</div>
+                <div class="cell">-</div>
+                <div class="cell">-</div>
+                <div class="cell verified-cell">✓</div>
+            </div>
+
+            <div class="table-row">
+                <div class="cell">1D Blocktiling</div>
+                <div class="cell">-</div>
+                <div class="cell">-</div>
+                <div class="cell verified-cell">✓</div>
+            </div>
+
+            <div class="table-row">
+                <div class="cell">2D Blocktiling</div>
+                <div class="cell">-</div>
+                <div class="cell">-</div>
+                <div class="cell verified-cell">✓</div>
+            </div>
+
+            <div class="table-row">
+                <div class="cell">Vectorized Mem Access</div>
+                <div class="cell">-</div>
+                <div class="cell">-</div>
+                <div class="cell verified-cell">✓</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const blockConfigurations = [
+            [1, 1], [1, 2], [2, 1], [2, 2], [2, 4], [4, 2],
+            [4, 4], [4, 8], [8, 4], [8, 8], [8, 16], [16, 8],
+            [16, 16], [32, 4], [4, 32], [32, 8], [8, 32],
+            [64, 2], [2, 64], [64, 4], [4, 64], [128, 2], [2, 128],
+            [256, 1], [1, 256]
+        ];
+
+        const matrixSizes = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
+
+        function showKernelDetails(details, matrixInfo) {
+            const existingPanel = document.querySelector('.kernel-details-panel');
+            if (existingPanel) {
+                existingPanel.remove();
+            }
+
+            const detailPanel = document.createElement('div');
+            detailPanel.className = 'kernel-details-panel';
+
+            detailPanel.innerHTML = `
+                <div class="details-content">
+                    <div class="details-section">
+                        <h4>Matrix Information</h4>
+                        <p>Matrix A: ${matrixInfo.M} × ${matrixInfo.K}</p>
+                        <p>Matrix B: ${matrixInfo.K} × ${matrixInfo.N}</p>
+                        <p>Matrix C: ${matrixInfo.M} × ${matrixInfo.N}</p>
+                    </div>
+
+                    <div class="details-section">
+                        <h4>Workgroup Configuration</h4>
+                        <p>Workgroup Size: ${details.dimX} × ${details.dimY}</p>
+                        <p>Grid Size: ${details.gridDimX} × ${details.gridDimY}</p>
+                        <p>Total Threads: ${details.dimX * details.dimY * details.gridDimX * details.gridDimY}</p>
+                    </div>
+
+                    <div class="details-section">
+                        <h4>Test Results</h4>
+                        <p>Total Configurations Tested: ${details.allTests.length}</p>
+                        <div class="results-grid">
+                            ${details.allTests.map(test => `
+                                <div class="result-item ${test.isSelected ? 'best' : ''}">
+                                    <p>Size: ${test.dimX}×${test.dimY}</p>
+                                    <p>Time: ${test.kernelTime.toFixed(2)}ms</p>
+                                    <p>GFLOPs: ${test.gflops.toFixed(2)}</p>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+
+                    <div class="details-section">
+                        <h4>Performance Metrics</h4>
+                        <p>Best Execution Time: ${details.kernelTime.toFixed(2)}ms</p>
+                        <p>Best Performance: ${details.gflops.toFixed(2)} GFLOP/s</p>
+                        <p>Max Error: ${details.maxDiff.toExponential(6)}</p>
+                        <p>Avg Error: ${details.avgDiff.toExponential(6)}</p>
+                    </div>
+
+                    <button class="close-btn">Close Details</button>
+                </div>
+            `;
+
+            const naiveRow = document.getElementById('naive-row');
+            naiveRow.parentNode.insertBefore(detailPanel, naiveRow.nextSibling);
+            detailPanel.querySelector('.close-btn').onclick = () => detailPanel.remove();
+        }
+
+        function calculateGFLOPs(M, N, K, timeInMs) {
+            const operations = 2n * BigInt(M) * BigInt(N) * BigInt(K);
+            const timeInSeconds = timeInMs / 1000;
+            const gflops = Number(operations) / (timeInSeconds * 1e9);
+            return gflops;
+        }
+
+        function generateRandomMatrix(size) {
+            const matrix = new Float32Array(size * size);
+            for (let i = 0; i < matrix.length; i++) {
+                matrix[i] = Math.random() * 2 - 1;
+            }
+            return matrix;
+        }
+
+        function getCPUResult(firstMatrix, secondMatrix, M, N, K, row, col) {
+            let sum = 0;
+            for (let k = 0; k < K; k++) {
+                sum += firstMatrix[row * K + k] * secondMatrix[k * N + col];
+            }
+            return sum;
+        }
+
+        function verifyResults(firstMatrix, secondMatrix, gpuResult, M, N, K) {
+            const results = [];
+            const numChecks = 20;
+
+            const positions = new Set();
+            while(positions.size < numChecks) {
+                const row = Math.floor(Math.random() * M);
+                const col = Math.floor(Math.random() * N);
+                positions.add(`${row},${col}`);
+            }
+
+            for(const pos of positions) {
+                const [row, col] = pos.split(',').map(Number);
+                const cpuResult = getCPUResult(firstMatrix, secondMatrix, M, N, K, row, col);
+                const gpuResultVal = gpuResult[row * N + col];
+                const diff = Math.abs(cpuResult - gpuResultVal);
+                const isCorrect = diff < 0.01;
+
+                results.push({
+                    row,
+                    col,
+                    cpuResult,
+                    gpuResult: gpuResultVal,
+                    isCorrect,
+                    diff
+                });
+            }
+
+            return results;
+        }
+
+        async function runMatrixMultiplication(blockDimX, blockDimY, M, N, K) {
+            if (!navigator.gpu) {
+                throw new Error('WebGPU not supported!');
+            }
+
+            const adapter = await navigator.gpu.requestAdapter();
+            if (!adapter) {
+                throw new Error('Failed to get GPU adapter.');
+            }
+            const device = await adapter.requestDevice();
+
+            const shaderModule = device.createShaderModule({
+                code: `
+                    override BLOCK_DIM_X: u32;
+                    override BLOCK_DIM_Y: u32;
+
+                    struct Matrix {
+                        size : vec2u,
+                        numbers : array<f32>,
+                    }
+
+                    struct Uniforms {
+                        M : u32,
+                        N : u32,
+                        K : u32,
+                        alpha : f32,
+                        beta : f32,
+                    }
+
+                    @group(0) @binding(0) var<storage, read> A : Matrix;
+                    @group(0) @binding(1) var<storage, read> B : Matrix;
+                    @group(0) @binding(2) var<storage, read_write> C : Matrix;
+                    @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+
+                    @compute @workgroup_size(BLOCK_DIM_X, BLOCK_DIM_Y)
+                    fn main(
+                        @builtin(workgroup_id) blockIdx : vec3<u32>,
+                        @builtin(local_invocation_id) threadIdx : vec3<u32>
+                    ) {
+                        let x = blockIdx.x * BLOCK_DIM_X + threadIdx.x;
+                        let y = blockIdx.y * BLOCK_DIM_Y + threadIdx.y;
+
+                        if (x < uniforms.M && y < uniforms.N) {
+                            var tmp: f32 = 0.0;
+
+                            for (var i: u32 = 0u; i < uniforms.K; i = i + 1u) {
+                                tmp = tmp + A.numbers[x * uniforms.K + i] * B.numbers[i * uniforms.N + y];
+                            }
+
+                            let idx = x * uniforms.N + y;
+                            C.numbers[idx] = uniforms.alpha * tmp + uniforms.beta * C.numbers[idx];
+                        }
+                    }
+                `
+            });
+
+            const alpha = 1.0;
+            const beta = 0.0;
+            const firstMatrix = generateRandomMatrix(M);
+            const secondMatrix = generateRandomMatrix(N);
+            const resultMatrixBuffer = new Float32Array(M * N);
+
+            const gpuBufferFirstMatrix = device.createBuffer({
+                mappedAtCreation: true,
+                size: firstMatrix.byteLength + 8,
+                usage: GPUBufferUsage.STORAGE
+            });
+            new Float32Array(gpuBufferFirstMatrix.getMappedRange()).set([M, K, ...firstMatrix]);
+            gpuBufferFirstMatrix.unmap();
+
+            const gpuBufferSecondMatrix = device.createBuffer({
+                mappedAtCreation: true,
+                size: secondMatrix.byteLength + 8,
+                usage: GPUBufferUsage.STORAGE
+            });
+            new Float32Array(gpuBufferSecondMatrix.getMappedRange()).set([K, N, ...secondMatrix]);
+            gpuBufferSecondMatrix.unmap();
+
+            const gpuBufferResultMatrix = device.createBuffer({
+                mappedAtCreation: true,
+                size: resultMatrixBuffer.byteLength + 8,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+            });
+            new Float32Array(gpuBufferResultMatrix.getMappedRange()).set([M, N]);
+            gpuBufferResultMatrix.unmap();
+
+            const uniformBuffer = device.createBuffer({
+                size: 20,
+                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+            });
+            device.queue.writeBuffer(
+                uniformBuffer,
+                0,
+                new Uint32Array([M, N, K])
+            );
+            device.queue.writeBuffer(
+                uniformBuffer,
+                12,
+                new Float32Array([alpha, beta])
+            );
+
+            const bindGroupLayout = device.createBindGroupLayout({
+                entries: [
+                    { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
+                    { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
+                    { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" }},
+                    { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" }}
+                ]
+            });
+
+            const bindGroup = device.createBindGroup({
+                layout: bindGroupLayout,
+                entries: [
+                    { binding: 0, resource: { buffer: gpuBufferFirstMatrix }},
+                    { binding: 1, resource: { buffer: gpuBufferSecondMatrix }},
+                    { binding: 2, resource: { buffer: gpuBufferResultMatrix }},
+                    { binding: 3, resource: { buffer: uniformBuffer }}
+                ]
+            });
+
+            const pipelineLayout = device.createPipelineLayout({
+                bindGroupLayouts: [bindGroupLayout]
+            });
+
+            const computePipeline = device.createComputePipeline({
+                layout: pipelineLayout,
+                compute: {
+                    module: shaderModule,
+                    entryPoint: "main",
+                    constants: {
+                        BLOCK_DIM_X: blockDimX,
+                        BLOCK_DIM_Y: blockDimY
+                    }
+                }
+            });
+
+            const commandEncoder = device.createCommandEncoder();
+            const passEncoder = commandEncoder.beginComputePass();
+            passEncoder.setPipeline(computePipeline);
+            passEncoder.setBindGroup(0, bindGroup);
+
+            const gridDimX = Math.ceil(M / blockDimX);
+            const gridDimY = Math.ceil(N / blockDimY);
+            passEncoder.dispatchWorkgroups(gridDimX, gridDimY);
+            passEncoder.end();
+
+            const startTime = performance.now();
+            device.queue.submit([commandEncoder.finish()]);
+            await device.queue.onSubmittedWorkDone();
+            const kernelTime = performance.now() - startTime;
+
+            const gpuReadBuffer = device.createBuffer({
+                size: resultMatrixBuffer.byteLength + 8,
+                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+            });
+
+            const readCommandEncoder = device.createCommandEncoder();
+            readCommandEncoder.copyBufferToBuffer(
+                gpuBufferResultMatrix, 0,
+                gpuReadBuffer, 0,
+                resultMatrixBuffer.byteLength + 8
+            );
+
+	    device.queue.submit([readCommandEncoder.finish()]);
+
+            await gpuReadBuffer.mapAsync(GPUMapMode.READ);
+            const result = new Float32Array(gpuReadBuffer.getMappedRange().slice(8));
+
+            const verificationResults = verifyResults(
+                firstMatrix,
+                secondMatrix,
+                result,
+                M,
+                N,
+                K
+            );
+
+            let allCorrect = true;
+            let maxDiff = 0;
+            let avgDiff = 0;
+
+            for (const check of verificationResults) {
+                maxDiff = Math.max(maxDiff, check.diff);
+                avgDiff += check.diff;
+                if (!check.isCorrect) allCorrect = false;
+            }
+
+            avgDiff /= verificationResults.length;
+            const gflops = calculateGFLOPs(M, N, K, kernelTime);
+
+            gpuReadBuffer.unmap();
+
+            return {
+                kernelTime,
+                gflops,
+                allCorrect,
+                maxDiff,
+                avgDiff,
+                gridDimX,
+                gridDimY,
+                dimX: blockDimX,
+                dimY: blockDimY
+            };
+        }
+
+        async function runGMEMCoalescingKernel(blockDimX, blockDimY, M, N, K) {
+            if (!navigator.gpu) {
+                throw new Error('WebGPU not supported!');
+            }
+
+            const adapter = await navigator.gpu.requestAdapter();
+            if (!adapter) {
+                throw new Error('Failed to get GPU adapter.');
+            }
+            const device = await adapter.requestDevice();
+
+            const shaderCode = `
+                struct Matrix {
+                    size : vec2u,
+                    numbers : array<f32>,
+                };
+                
+                struct Uniforms {
+                    M : u32,
+                    N : u32,
+                    K : u32,
+                    blockHeight : u32,
+                    blockWidth : u32,
+                    alpha : f32,
+                    beta : f32,
+                };
+                
+                @group(0) @binding(0) var<storage, read> A : Matrix;
+                @group(0) @binding(1) var<storage, read> B : Matrix;
+                @group(0) @binding(2) var<storage, read_write> C : Matrix;
+                @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+                
+                const TILE_SIZE: u32 = 16u;  // Tile size for memory coalescing
+                
+                var<workgroup> tileA: array<f32, TILE_SIZE * TILE_SIZE>;
+                var<workgroup> tileB: array<f32, TILE_SIZE * TILE_SIZE>;
+                
+                @compute @workgroup_size(${blockDimX}, ${blockDimY})
+                fn main(
+                    @builtin(workgroup_id) blockIdx : vec3<u32>,
+                    @builtin(local_invocation_id) threadIdx : vec3<u32>,
+                    @builtin(local_invocation_index) localIdx : u32
+                ) {
+                    // Calculate global positions
+                    let row = blockIdx.x * ${blockDimX}u + threadIdx.x;
+                    let col = blockIdx.y * ${blockDimY}u + threadIdx.y;
+                    
+                    var acc: f32 = 0.0;
+                    
+                    // Calculate number of tiles needed
+                    let numTiles = (uniforms.K + TILE_SIZE - 1u) / TILE_SIZE;
+                    
+                    // Iterate over tiles
+                    for(var t: u32 = 0u; t < numTiles; t = t + 1u) {
+                        // Collaborative loading of tiles into shared memory
+                        if (localIdx < TILE_SIZE * TILE_SIZE) {
+                            let tileRow = localIdx / TILE_SIZE;
+                            let tileCol = localIdx % TILE_SIZE;
+                            
+                            let globalRow = blockIdx.x * ${blockDimX}u + tileRow;
+                            let globalCol = t * TILE_SIZE + tileCol;
+                            
+                            if (globalRow < uniforms.M && globalCol < uniforms.K) {
+                                tileA[tileRow * TILE_SIZE + tileCol] = 
+                                    A.numbers[globalRow * uniforms.K + globalCol];
+                            } else {
+                                tileA[tileRow * TILE_SIZE + tileCol] = 0.0;
+                            }
+                            
+                            let globalRowB = t * TILE_SIZE + tileRow;
+                            let globalColB = blockIdx.y * ${blockDimY}u + tileCol;
+                            
+                            if (globalRowB < uniforms.K && globalColB < uniforms.N) {
+                                tileB[tileRow * TILE_SIZE + tileCol] = 
+                                    B.numbers[globalRowB * uniforms.N + globalColB];
+                            } else {
+                                tileB[tileRow * TILE_SIZE + tileCol] = 0.0;
+                            }
+                        }
+                        
+                        workgroupBarrier();
+                        
+                        // Compute on the tile
+                        for (var k: u32 = 0u; k < TILE_SIZE; k = k + 1u) {
+                            if (row < uniforms.M && col < uniforms.N) {
+                                acc = acc + tileA[threadIdx.x * TILE_SIZE + k] * 
+                                       tileB[k * TILE_SIZE + threadIdx.y];
+                            }
+                        }
+                        
+                        workgroupBarrier();
+                    }
+                    
+                    // Write final result with coalesced memory access
+                    if (row < uniforms.M && col < uniforms.N) {
+                        let idx = row * uniforms.N + col;
+                        C.numbers[idx] = uniforms.alpha * acc + uniforms.beta * C.numbers[idx];
+                    }
+                }
+            `;
+
+            const shaderModule = device.createShaderModule({
+                code: shaderCode
+            });
+
+            const alpha = 1.0;
+            const beta = 0.0;
+            const firstMatrix = generateRandomMatrix(M);
+            const secondMatrix = generateRandomMatrix(N);
+            const resultMatrixBuffer = new Float32Array(M * N);
+
+            const gpuBufferFirstMatrix = device.createBuffer({
+                mappedAtCreation: true,
+                size: firstMatrix.byteLength + 8,
+                usage: GPUBufferUsage.STORAGE
+            });
+            new Float32Array(gpuBufferFirstMatrix.getMappedRange()).set([M, K, ...firstMatrix]);
+            gpuBufferFirstMatrix.unmap();
+
+            const gpuBufferSecondMatrix = device.createBuffer({
+                mappedAtCreation: true,
+                size: secondMatrix.byteLength + 8,
+                usage: GPUBufferUsage.STORAGE
+            });
+            new Float32Array(gpuBufferSecondMatrix.getMappedRange()).set([K, N, ...secondMatrix]);
+            gpuBufferSecondMatrix.unmap();
+
+            const gpuBufferResultMatrix = device.createBuffer({
+                mappedAtCreation: true,
+                size: resultMatrixBuffer.byteLength + 8,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+            });
+            new Float32Array(gpuBufferResultMatrix.getMappedRange()).set([M, N]);
+            gpuBufferResultMatrix.unmap();
+
+            const uniformBuffer = device.createBuffer({
+                size: 28,
+                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+            });
+
+            const uniformData = new ArrayBuffer(28);
+            new Uint32Array(uniformData, 0, 5).set([M, N, K, blockDimY, blockDimX]);
+            new Float32Array(uniformData, 20, 2).set([alpha, beta]);
+            device.queue.writeBuffer(uniformBuffer, 0, uniformData);
+
+            const bindGroupLayout = device.createBindGroupLayout({
+                entries: [
+                    { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
+                    { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
+                    { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" }},
+                    { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" }}
+                ]
+            });
+
+            const bindGroup = device.createBindGroup({
+                layout: bindGroupLayout,
+                entries: [
+                    { binding: 0, resource: { buffer: gpuBufferFirstMatrix }},
+                    { binding: 1, resource: { buffer: gpuBufferSecondMatrix }},
+                    { binding: 2, resource: { buffer: gpuBufferResultMatrix }},
+                    { binding: 3, resource: { buffer: uniformBuffer }}
+                ]
+            });
+
+            const computePipeline = device.createComputePipeline({
+                layout: device.createPipelineLayout({
+                    bindGroupLayouts: [bindGroupLayout]
+                }),
+                compute: {
+                    module: shaderModule,
+                    entryPoint: "main"
+                }
+            });
+
+            const commandEncoder = device.createCommandEncoder();
+            const passEncoder = commandEncoder.beginComputePass();
+            passEncoder.setPipeline(computePipeline);
+            passEncoder.setBindGroup(0, bindGroup);
+
+            const gridDimX = Math.ceil(M / blockDimX);
+            const gridDimY = Math.ceil(N / blockDimY);
+            passEncoder.dispatchWorkgroups(gridDimX, gridDimY, 1);
+            passEncoder.end();
+
+            const startTime = performance.now();
+            device.queue.submit([commandEncoder.finish()]);
+            await device.queue.onSubmittedWorkDone();
+            const kernelTime = performance.now() - startTime;
+
+            const gpuReadBuffer = device.createBuffer({
+                size: resultMatrixBuffer.byteLength + 8,
+                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+            });
+
+            const readCommandEncoder = device.createCommandEncoder();
+            readCommandEncoder.copyBufferToBuffer(
+                gpuBufferResultMatrix, 0,
+                gpuReadBuffer, 0,
+                resultMatrixBuffer.byteLength + 8
+            );
+
+            device.queue.submit([readCommandEncoder.finish()]);
+
+            await gpuReadBuffer.mapAsync(GPUMapMode.READ);
+            const result = new Float32Array(gpuReadBuffer.getMappedRange().slice(8));
+
+            const verificationResults = verifyResults(
+                firstMatrix,
+                secondMatrix,
+                result,
+                M,
+                N,
+                K
+            );
+
+            let allCorrect = true;
+            let maxDiff = 0;
+            let avgDiff = 0;
+
+            for (const check of verificationResults) {
+                maxDiff = Math.max(maxDiff, check.diff);
+                avgDiff += check.diff;
+                if (!check.isCorrect) allCorrect = false;
+            }
+
+            avgDiff /= verificationResults.length;
+            const gflops = calculateGFLOPs(M, N, K, kernelTime);
+
+            gpuReadBuffer.unmap();
+
+            return {
+                kernelTime,
+                gflops,
+                allCorrect,
+                maxDiff,
+                avgDiff,
+                gridDimX,
+                gridDimY,
+                dimX: blockDimX,
+                dimY: blockDimY
+            };
+        }
+
+        async function runKernels() {
+            const mSize = matrixSizes[document.getElementById('m-slider').value];
+            const nSize = matrixSizes[document.getElementById('n-slider').value];
+            const kSize = matrixSizes[document.getElementById('k-slider').value];
+            const iterations = parseInt(document.getElementById('iterations').value) || 16;
+
+            // Run naive kernel
+            const naiveResults = [];
+            for (const [dimX, dimY] of blockConfigurations) {
+                try {
+                    const result = await runMatrixMultiplication(dimX, dimY, mSize, nSize, kSize);
+                    naiveResults.push({ dimX, dimY, ...result });
+                } catch (error) {
+                    console.error(`Failed testing naive ${dimX}x${dimY}:`, error);
+                }
+            }
+
+            // Run GMEM Coalescing kernel
+            const gmemResults = [];
+            for (const [dimX, dimY] of blockConfigurations) {
+                try {
+                    const result = await runGMEMCoalescingKernel(dimX, dimY, mSize, nSize, kSize);
+                    gmemResults.push({ dimX, dimY, ...result });
+                } catch (error) {
+                    console.error(`Failed testing GMEM ${dimX}x${dimY}:`, error);
+                }
+            }
+
+            // Update naive kernel results
+            naiveResults.sort((a, b) => b.gflops - a.gflops);
+            const bestNaiveConfig = naiveResults[0];
+
+            const naiveRow = document.getElementById('naive-row');
+            naiveRow.innerHTML = `
+                <div class="cell">Naive ${bestNaiveConfig.dimX}×${bestNaiveConfig.dimY}</div>
+                <div class="cell">${bestNaiveConfig.kernelTime.toFixed(2)}ms</div>
+                <div class="cell">${bestNaiveConfig.gflops.toFixed(2)}</div>
+                <div class="cell ${bestNaiveConfig.allCorrect ? 'verified-cell' : 'not-verified-cell'}">
+                    ${bestNaiveConfig.allCorrect ? '✓' : '✗'}
+                </div>
+            `;
+
+            // Update GMEM Coalescing results
+            gmemResults.sort((a, b) => b.gflops - a.gflops);
+            const bestGMEMConfig = gmemResults[0];
+
+            const gmemRow = document.querySelector('.table-row:nth-child(2)');
+            gmemRow.innerHTML = `
+                <div class="cell">GMEM Coalescing ${bestGMEMConfig.dimX}×${bestGMEMConfig.dimY}</div>
+                <div class="cell">${bestGMEMConfig.kernelTime.toFixed(2)}ms</div>
+                <div class="cell">${bestGMEMConfig.gflops.toFixed(2)}</div>
+                <div class="cell ${bestGMEMConfig.allCorrect ? 'verified-cell' : 'not-verified-cell'}">
+                    ${bestGMEMConfig.allCorrect ? '✓' : '✗'}
+                </div>
+            `;
+
+            // Add click handlers for details
+            const naiveDetails = {
+                ...bestNaiveConfig,
+                allTests: naiveResults.map(r => ({
+                    ...r,
+                    isSelected: r === bestNaiveConfig
+                }))
+            };
+
+            const gmemDetails = {
+                ...bestGMEMConfig,
+                allTests: gmemResults.map(r => ({
+                    ...r,
+                    isSelected: r === bestGMEMConfig
+                }))
+            };
+
+            const matrixInfo = {
+                M: mSize,
+                N: nSize,
+                K: kSize
+            };
+
+            naiveRow.setAttribute('data-details', JSON.stringify(naiveDetails));
+            naiveRow.setAttribute('data-matrix-info', JSON.stringify(matrixInfo));
+            naiveRow.onclick = () => showKernelDetails(naiveDetails, matrixInfo);
+
+            gmemRow.setAttribute('data-details', JSON.stringify(gmemDetails));
+            gmemRow.setAttribute('data-matrix-info', JSON.stringify(matrixInfo));
+            gmemRow.onclick = () => showKernelDetails(gmemDetails, matrixInfo);
+        }
+
+        function updateSliderValue(sliderId, valueId) {
+            const slider = document.getElementById(sliderId);
+            const valueDisplay = document.getElementById(valueId);
+            const index = parseInt(slider.value);
+            valueDisplay.textContent = matrixSizes[index];
+        }
+
+        function createTicks(sliderId) {
+            const ticksContainer = document.getElementById(sliderId + '-ticks');
+            matrixSizes.forEach((size, index) => {
+                const tick = document.createElement('div');
+                tick.className = 'tick';
+                const label = document.createElement('div');
+                label.className = 'tick-label';
+                label.textContent = size;
+                tick.appendChild(label);
+                ticksContainer.appendChild(tick);
+            });
+        }
+
+        function setDefaultValues() {
+            const defaultValue = "7";
+            document.getElementById('m-slider').value = defaultValue;
+            document.getElementById('n-slider').value = defaultValue;
+            document.getElementById('k-slider').value = defaultValue;
+            updateSliderValue('m-slider', 'm-value');
+            updateSliderValue('n-slider', 'n-value');
+            updateSliderValue('k-slider', 'k-value');
+            document.getElementById('iterations').value = 16;
+        }
+
+        function resetValues() {
+            const minValue = "0";
+            document.getElementById('m-slider').value = minValue;
+            document.getElementById('n-slider').value = minValue;
+            document.getElementById('k-slider').value = minValue;
+            updateSliderValue('m-slider', 'm-value');
+            updateSliderValue('n-slider', 'n-value');
+            updateSliderValue('k-slider', 'k-value');
+            document.getElementById('iterations').value = 16;
+
+            // Reset table values but keep all rows
+            const cells = document.querySelectorAll('.table-row .cell:nth-child(2), .table-row .cell:nth-child(3)');
+            cells.forEach(cell => cell.textContent = '-');
+
+            // Reset naive row to original state
+            const naiveRow = document.getElementById('naive-row');
+            naiveRow.querySelector('.cell:first-child').textContent = 'Naive';
+            naiveRow.removeAttribute('data-details');
+
+            // Reset GMEM Coalescing row
+            const gmemRow = document.querySelector('.table-row:nth-child(2)');
+            gmemRow.querySelector('.cell:first-child').textContent = 'GMEM Coalescing';
+            gmemRow.removeAttribute('data-details');
+        }
+
+        function downloadResults() {
+            const mSize = matrixSizes[document.getElementById('m-slider').value];
+            const nSize = matrixSizes[document.getElementById('n-slider').value];
+            const kSize = matrixSizes[document.getElementById('k-slider').value];
+            const iterations = parseInt(document.getElementById('iterations').value) || 16;
+
+            const results = {
+                dimensions: {
+                    M: mSize,
+                    N: nSize,
+                    K: kSize
+                },
+                iterations: iterations,
+                kernels: []
+            };
+
+            const rows = document.querySelectorAll('.table-row');
+            rows.forEach(row => {
+                const cells = row.querySelectorAll('.cell');
+                results.kernels.push({
+                    name: cells[0].textContent,
+                    executionTime: cells[1].textContent,
+                    gflops: cells[2].textContent,
+                    verified: cells[3].textContent === '✓'
+                });
+
+                // Add extra details if available
+                if (row.hasAttribute('data-details')) {
+                    const details = JSON.parse(row.getAttribute('data-details'));
+                    results.kernels[results.kernels.length - 1].details = details;
+                }
+            });
+
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(results, null, 2));
+            const downloadAnchorNode = document.createElement('a');
+            downloadAnchorNode.setAttribute("href", dataStr);
+            downloadAnchorNode.setAttribute("download", "gemm_results.json");
+            document.body.appendChild(downloadAnchorNode);
+            downloadAnchorNode.click();
+            downloadAnchorNode.remove();
+        }
+
+        function detectGPU() {
+            try {
+                const canvas = document.createElement('canvas');
+                const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+
+                if (!gl) {
+                    throw new Error('WebGL not supported');
+                }
+
+                const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+
+                if (!debugInfo) {
+                    throw new Error('Debug renderer info not available');
+                }
+
+                const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+                document.getElementById('device-info').textContent = renderer || 'Unknown GPU';
+
+            } catch (error) {
+                console.error('Error detecting GPU:', error);
+                document.getElementById('device-info').textContent = 'GPU detection not supported';
+            }
+        }
+
+        window.onload = function() {
+            createTicks('m-slider');
+            createTicks('n-slider');
+            createTicks('k-slider');
+            setDefaultValues();
+            detectGPU();
+        }
+    </script>
+</body>
+</html>
