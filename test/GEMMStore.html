@@ -489,8 +489,8 @@
                     <span id="n-value">1024</span>
                 </div>
                 <div class="slider-wrapper">
-                    <input type="range" min="0" max="9" value="7" class="slider" id="n-slider"
-			   oninput="updateSliderValue('n-slider', 'n-value')">
+		<input type="range" min="0" max="9" value="7" class="slider" id="n-slider"
+                           oninput="updateSliderValue('n-slider', 'n-value')">
                     <div class="slider-ticks" id="n-slider-ticks"></div>
                 </div>
             </div>
@@ -536,6 +536,13 @@
 
             <div class="table-row">
                 <div class="cell">GMEM Coalescing</div>
+                <div class="cell">-</div>
+                <div class="cell">-</div>
+                <div class="cell verified-cell">✓</div>
+            </div>
+
+            <div class="table-row">
+                <div class="cell">SMEM Caching</div>
                 <div class="cell">-</div>
                 <div class="cell">-</div>
                 <div class="cell verified-cell">✓</div>
@@ -629,7 +636,7 @@
             return results;
         }
 
-        async function runMatrixMultiplication(blockDimX, blockDimY, M, N, K) {
+	async function runMatrixMultiplication(blockX, blockY, M, N, K) {
             if (!navigator.gpu) {
                 throw new Error('WebGPU not supported!');
             }
@@ -685,6 +692,31 @@
                 `
             });
 
+            const bindGroupLayout = device.createBindGroupLayout({
+                entries: [
+                    { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
+                    { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
+                    { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" }},
+                    { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" }}
+                ]
+            });
+
+            const pipelineLayout = device.createPipelineLayout({
+                bindGroupLayouts: [bindGroupLayout]
+            });
+
+            const computePipeline = device.createComputePipeline({
+                layout: pipelineLayout,
+                compute: {
+                    module: shaderModule,
+                    entryPoint: "main",
+                    constants: {
+                        BLOCK_DIM_X: blockX,
+                        BLOCK_DIM_Y: blockY
+                    }
+                }
+            });
+
             const alpha = 1.0;
             const beta = 0.0;
             const firstMatrix = generateRandomMatrix(M);
@@ -713,8 +745,8 @@
                 usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
             });
             const mappedRange = new Float32Array(gpuBufferResultMatrix.getMappedRange());
-            mappedRange.set([M, N]);  // Set dimensions
-            mappedRange.fill(0, 2);   // Initialize the rest of the buffer with zeros
+            mappedRange.set([M, N]);
+            mappedRange.fill(0, 2);
             gpuBufferResultMatrix.unmap();
 
             const uniformBuffer = device.createBuffer({
@@ -732,15 +764,6 @@
                 new Float32Array([alpha, beta])
             );
 
-            const bindGroupLayout = device.createBindGroupLayout({
-                entries: [
-                    { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
-                    { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
-                    { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" }},
-                    { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" }}
-                ]
-            });
-
             const bindGroup = device.createBindGroup({
                 layout: bindGroupLayout,
                 entries: [
@@ -751,29 +774,13 @@
                 ]
             });
 
-            const pipelineLayout = device.createPipelineLayout({
-                bindGroupLayouts: [bindGroupLayout]
-            });
-
-            const computePipeline = device.createComputePipeline({
-                layout: pipelineLayout,
-                compute: {
-                    module: shaderModule,
-                    entryPoint: "main",
-                    constants: {
-                        BLOCK_DIM_X: blockDimX,
-                        BLOCK_DIM_Y: blockDimY
-                    }
-                }
-            });
-
             const commandEncoder = device.createCommandEncoder();
             const passEncoder = commandEncoder.beginComputePass();
             passEncoder.setPipeline(computePipeline);
             passEncoder.setBindGroup(0, bindGroup);
 
-            const gridDimX = Math.ceil(M / blockDimX);
-            const gridDimY = Math.ceil(N / blockDimY);
+            const gridDimX = Math.ceil(M / blockX);
+            const gridDimY = Math.ceil(N / blockY);
             passEncoder.dispatchWorkgroups(gridDimX, gridDimY);
             passEncoder.end();
 
@@ -831,13 +838,45 @@
                 avgDiff,
                 gridDimX,
                 gridDimY,
-                dimX: blockDimX,
-                dimY: blockDimY,
+                dimX: blockX,
+                dimY: blockY,
                 verificationResults
             };
         }
 
-        async function runGMEMCoalescingKernel(device, blockHeight, blockWidth, M, N, K) {
+	async function runGMEMCoalescingKernel(device, blockHeight, blockWidth, M, N, K) {
+            const alpha = 1.0;
+            const beta = 0.0;
+            const firstMatrix = generateRandomMatrix(M);
+            const secondMatrix = generateRandomMatrix(N);
+            const resultMatrixBuffer = new Float32Array(M * N);
+
+            const gpuBufferFirstMatrix = device.createBuffer({
+                mappedAtCreation: true,
+                size: firstMatrix.byteLength + 8,
+                usage: GPUBufferUsage.STORAGE
+            });
+            new Float32Array(gpuBufferFirstMatrix.getMappedRange()).set([M, K, ...firstMatrix]);
+            gpuBufferFirstMatrix.unmap();
+
+            const gpuBufferSecondMatrix = device.createBuffer({
+                mappedAtCreation: true,
+                size: secondMatrix.byteLength + 8,
+                usage: GPUBufferUsage.STORAGE
+            });
+            new Float32Array(gpuBufferSecondMatrix.getMappedRange()).set([K, N, ...secondMatrix]);
+            gpuBufferSecondMatrix.unmap();
+
+            const gpuBufferResultMatrix = device.createBuffer({
+                mappedAtCreation: true,
+                size: resultMatrixBuffer.byteLength + 8,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+            });
+            const mappedRange = new Float32Array(gpuBufferResultMatrix.getMappedRange());
+            mappedRange.set([M, N]);
+            mappedRange.fill(0, 2);
+            gpuBufferResultMatrix.unmap();
+
             const shaderModule = device.createShaderModule({
                 code: `
                     struct Matrix {
@@ -897,38 +936,6 @@
                     }
                 `
             });
-
-            const alpha = 1.0;
-            const beta = 0.0;
-            const firstMatrix = generateRandomMatrix(M);
-            const secondMatrix = generateRandomMatrix(N);
-            const resultMatrixBuffer = new Float32Array(M * N);
-
-            const gpuBufferFirstMatrix = device.createBuffer({
-                mappedAtCreation: true,
-                size: firstMatrix.byteLength + 8,
-                usage: GPUBufferUsage.STORAGE
-            });
-            new Float32Array(gpuBufferFirstMatrix.getMappedRange()).set([M, K, ...firstMatrix]);
-            gpuBufferFirstMatrix.unmap();
-
-            const gpuBufferSecondMatrix = device.createBuffer({
-                mappedAtCreation: true,
-                size: secondMatrix.byteLength + 8,
-                usage: GPUBufferUsage.STORAGE
-            });
-            new Float32Array(gpuBufferSecondMatrix.getMappedRange()).set([K, N, ...secondMatrix]);
-            gpuBufferSecondMatrix.unmap();
-
-            const gpuBufferResultMatrix = device.createBuffer({
-                mappedAtCreation: true,
-                size: resultMatrixBuffer.byteLength + 8,
-                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
-            });
-            const mappedRange = new Float32Array(gpuBufferResultMatrix.getMappedRange());
-            mappedRange.set([M, N]);
-            mappedRange.fill(0, 2);
-            gpuBufferResultMatrix.unmap();
 
             const uniformBuffer = device.createBuffer({
                 size: 28,
@@ -1038,15 +1045,235 @@
             };
         }
 
-        function showKernelDetails(details, matrixInfo) {
+	async function runSMEMCachingKernel(device, blockX, blockY, M, N, K) {
+            const workgroupSize = blockX * blockY;
+
+            const shaderModule = device.createShaderModule({
+                code: `
+                    struct Matrix {
+                        size : vec2u,
+                        numbers : array<f32>,
+                    }
+
+                    struct Uniforms {
+                        M : u32,
+                        N : u32,
+                        K : u32,
+                        alpha : f32,
+                        beta : f32,
+                    }
+
+                    @group(0) @binding(0) var<storage, read> A : Matrix;
+                    @group(0) @binding(1) var<storage, read> B : Matrix;
+                    @group(0) @binding(2) var<storage, read_write> C : Matrix;
+                    @group(0) @binding(3) var<uniform> uniforms : Uniforms;
+
+                    var<workgroup> As: array<f32, ${blockX * blockY}>;
+                    var<workgroup> Bs: array<f32, ${blockX * blockY}>;
+
+                    @compute @workgroup_size(${workgroupSize})
+                    fn main(
+                        @builtin(workgroup_id) blockIdx : vec3<u32>,
+                        @builtin(local_invocation_id) threadIdx : vec3<u32>
+                    ) {
+                        let cRow = blockIdx.x * ${blockY}u;
+                        let cCol = blockIdx.y * ${blockX}u;
+
+                        let threadId = threadIdx.x;
+                        let threadCol = threadId % ${blockX}u;
+                        let threadRow = threadId / ${blockX}u;
+
+                        let aRowStart = cRow + threadRow;
+                        let bColStart = cCol + threadCol;
+
+                        var tmp: f32 = 0.0;
+
+                        for(var bkIdx: u32 = 0u; bkIdx < uniforms.K; bkIdx += ${blockX}u) {
+                            // Load data into shared memory
+                            if (aRowStart < uniforms.M && (bkIdx + threadCol) < uniforms.K) {
+                                As[threadRow * ${blockX}u + threadCol] =
+                                    A.numbers[aRowStart * uniforms.K + bkIdx + threadCol];
+                            }
+
+                            if ((bkIdx + threadRow) < uniforms.K && bColStart < uniforms.N) {
+                                Bs[threadRow * ${blockX}u + threadCol] =
+                                    B.numbers[(bkIdx + threadRow) * uniforms.N + bColStart];
+                            }
+
+                            workgroupBarrier();
+
+                            // Compute partial dot product
+                            for(var k: u32 = 0u; k < ${blockX}u && (bkIdx + k) < uniforms.K; k += 1u) {
+                                tmp += As[threadRow * ${blockX}u + k] *
+                                      Bs[k * ${blockX}u + threadCol];
+                            }
+
+                            workgroupBarrier();
+                        }
+
+                        // Write result
+                        if (aRowStart < uniforms.M && bColStart < uniforms.N) {
+                            let cIndex = aRowStart * uniforms.N + bColStart;
+                            C.numbers[cIndex] = uniforms.alpha * tmp + uniforms.beta * C.numbers[cIndex];
+                        }
+                    }
+                `
+            });
+
+            const alpha = 1.0;
+            const beta = 0.0;
+            const firstMatrix = generateRandomMatrix(M);
+            const secondMatrix = generateRandomMatrix(N);
+            const resultMatrixBuffer = new Float32Array(M * N);
+
+            const gpuBufferFirstMatrix = device.createBuffer({
+                mappedAtCreation: true,
+                size: firstMatrix.byteLength + 8,
+                usage: GPUBufferUsage.STORAGE
+            });
+            new Float32Array(gpuBufferFirstMatrix.getMappedRange()).set([M, K, ...firstMatrix]);
+            gpuBufferFirstMatrix.unmap();
+
+            const gpuBufferSecondMatrix = device.createBuffer({
+                mappedAtCreation: true,
+                size: secondMatrix.byteLength + 8,
+                usage: GPUBufferUsage.STORAGE
+            });
+            new Float32Array(gpuBufferSecondMatrix.getMappedRange()).set([K, N, ...secondMatrix]);
+            gpuBufferSecondMatrix.unmap();
+
+            const gpuBufferResultMatrix = device.createBuffer({
+                mappedAtCreation: true,
+                size: resultMatrixBuffer.byteLength + 8,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+            });
+            const mappedRange = new Float32Array(gpuBufferResultMatrix.getMappedRange());
+            mappedRange.set([M, N]);
+            mappedRange.fill(0, 2);
+            gpuBufferResultMatrix.unmap();
+
+            const uniformBuffer = device.createBuffer({
+                size: 20,
+                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+            });
+            device.queue.writeBuffer(
+                uniformBuffer,
+                0,
+                new Uint32Array([M, N, K])
+            );
+            device.queue.writeBuffer(
+                uniformBuffer,
+                12,
+                new Float32Array([alpha, beta])
+            );
+
+            const bindGroupLayout = device.createBindGroupLayout({
+                entries: [
+                    { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
+                    { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
+                    { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" }},
+                    { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" }}
+                ]
+            });
+
+            const bindGroup = device.createBindGroup({
+                layout: bindGroupLayout,
+                entries: [
+                    { binding: 0, resource: { buffer: gpuBufferFirstMatrix }},
+                    { binding: 1, resource: { buffer: gpuBufferSecondMatrix }},
+                    { binding: 2, resource: { buffer: gpuBufferResultMatrix }},
+                    { binding: 3, resource: { buffer: uniformBuffer }}
+                ]
+            });
+
+            const computePipeline = device.createComputePipeline({
+                layout: device.createPipelineLayout({
+                    bindGroupLayouts: [bindGroupLayout]
+                }),
+                compute: {
+                    module: shaderModule,
+                    entryPoint: "main"
+                }
+            });
+
+            const gridDimX = Math.ceil(M / blockY);
+            const gridDimY = Math.ceil(N / blockX);
+
+            const commandEncoder = device.createCommandEncoder();
+            const passEncoder = commandEncoder.beginComputePass();
+            passEncoder.setPipeline(computePipeline);
+            passEncoder.setBindGroup(0, bindGroup);
+            passEncoder.dispatchWorkgroups(gridDimX, gridDimY, 1);
+            passEncoder.end();
+
+            const startTime = performance.now();
+            device.queue.submit([commandEncoder.finish()]);
+            await device.queue.onSubmittedWorkDone();
+            const kernelTime = performance.now() - startTime;
+
+            const gpuReadBuffer = device.createBuffer({
+                size: resultMatrixBuffer.byteLength + 8,
+                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+            });
+
+            const readCommandEncoder = device.createCommandEncoder();
+            readCommandEncoder.copyBufferToBuffer(
+                gpuBufferResultMatrix, 0,
+                gpuReadBuffer, 0,
+                resultMatrixBuffer.byteLength + 8
+            );
+
+            device.queue.submit([readCommandEncoder.finish()]);
+            await gpuReadBuffer.mapAsync(GPUMapMode.READ);
+            const result = new Float32Array(gpuReadBuffer.getMappedRange().slice(8));
+
+            const verificationResults = verifyResults(
+                firstMatrix,
+                secondMatrix,
+                result,
+                M,
+                N,
+                K
+            );
+
+            let allCorrect = true;
+            let maxDiff = 0;
+            let avgDiff = 0;
+
+            for (const check of verificationResults) {
+                maxDiff = Math.max(maxDiff, check.diff);
+                avgDiff += check.diff;
+                if (!check.isCorrect) allCorrect = false;
+            }
+            avgDiff /= verificationResults.length;
+
+            const gflops = calculateGFLOPs(M, N, K, kernelTime);
+
+            gpuReadBuffer.unmap();
+
+            return {
+                kernelTime,
+                gflops,
+                allCorrect,
+                maxDiff,
+                avgDiff,
+                gridDimX,
+                gridDimY,
+                dimX: blockX,
+                dimY: blockY,
+                verificationResults
+            };
+        }
+
+	function showKernelDetails(details, matrixInfo) {
             const existingPanel = document.querySelector('.kernel-details-panel');
-            
+
             // If panel exists and it's right after the clicked row, just remove it
             if (existingPanel && existingPanel.previousElementSibling === event.currentTarget) {
                 existingPanel.remove();
                 return;
             }
-            
+
             // Remove any existing panel
             if (existingPanel) {
                 existingPanel.remove();
@@ -1153,12 +1380,25 @@
                 }
             }
 
+            // Run SMEM Caching kernel
+            const smemResults = [];
+            for (const [dimX, dimY] of blockConfigurations) {
+                try {
+                    const result = await runSMEMCachingKernel(device, dimX, dimY, mSize, nSize, kSize);
+                    smemResults.push({ dimX, dimY, ...result });
+                } catch (error) {
+                    console.error(`Failed testing SMEM ${dimX}x${dimY}:`, error);
+                }
+            }
+
             // Sort results by GFLOPS
             naiveResults.sort((a, b) => b.gflops - a.gflops);
             gmemResults.sort((a, b) => b.gflops - a.gflops);
+            smemResults.sort((a, b) => b.gflops - a.gflops);
 
             const bestNaiveConfig = naiveResults[0];
             const bestGMEMConfig = gmemResults[0];
+            const bestSMEMConfig = smemResults[0];
 
             // Update naive kernel results
             const naiveRow = document.getElementById('naive-row');
@@ -1182,6 +1422,23 @@
                 </div>
             `;
 
+            // Update SMEM Caching results
+            const smemRow = document.querySelector('.table-row:nth-child(3)');
+            smemRow.innerHTML = `
+                <div class="cell">SMEM Caching ${bestSMEMConfig.dimX}×${bestSMEMConfig.dimY}</div>
+                <div class="cell">${bestSMEMConfig.kernelTime.toFixed(2)}ms</div>
+                <div class="cell">${bestSMEMConfig.gflops.toFixed(2)}</div>
+                <div class="cell ${bestSMEMConfig.allCorrect ? 'verified-cell' : 'not-verified-cell'}">
+                    ${bestSMEMConfig.allCorrect ? '✓' : '✗'}
+                </div>
+            `;
+
+            const matrixInfo = {
+                M: mSize,
+                N: nSize,
+                K: kSize
+            };
+
             // Add click handlers for details
             const naiveDetails = {
                 ...bestNaiveConfig,
@@ -1199,14 +1456,17 @@
                 }))
             };
 
-            const matrixInfo = {
-                M: mSize,
-                N: nSize,
-                K: kSize
+            const smemDetails = {
+                ...bestSMEMConfig,
+                allTests: smemResults.map(r => ({
+                    ...r,
+                    isSelected: r === bestSMEMConfig
+                }))
             };
 
             naiveRow.onclick = () => showKernelDetails(naiveDetails, matrixInfo);
-            gmemRow.onclick = () => showKernelDetails(gmemDetails,matrixInfo);
+            gmemRow.onclick = () => showKernelDetails(gmemDetails, matrixInfo);
+            smemRow.onclick = () => showKernelDetails(smemDetails, matrixInfo);
         }
 
         function updateSliderValue(sliderId, valueId) {
@@ -1250,19 +1510,17 @@
             updateSliderValue('k-slider', 'k-value');
             document.getElementById('iterations').value = 16;
 
-            // Reset table values but keep all rows
+            // Reset table values
             const cells = document.querySelectorAll('.table-row .cell:nth-child(2), .table-row .cell:nth-child(3)');
             cells.forEach(cell => cell.textContent = '-');
 
-            // Reset naive row to original state
-            const naiveRow = document.getElementById('naive-row');
-            naiveRow.querySelector('.cell:first-child').textContent = 'Naive';
-            naiveRow.removeAttribute('data-details');
-
-            // Reset GMEM Coalescing row
-            const gmemRow = document.querySelector('.table-row:nth-child(2)');
-            gmemRow.querySelector('.cell:first-child').textContent = 'GMEM Coalescing';
-            gmemRow.removeAttribute('data-details');
+            // Reset kernel names to original state
+            document.querySelector('#naive-row .cell:first-child').textContent = 'Naive';
+            document.querySelector('.table-row:nth-child(2) .cell:first-child').textContent = 'GMEM Coalescing';
+            document.querySelector('.table-row:nth-child(3) .cell:first-child').textContent = 'SMEM Caching';
+            document.querySelector('.table-row:nth-child(4) .cell:first-child').textContent = '1D Blocktiling';
+            document.querySelector('.table-row:nth-child(5) .cell:first-child').textContent = '2D Blocktiling';
+            document.querySelector('.table-row:nth-child(6) .cell:first-child').textContent = 'Vectorized Mem Access';
 
             // Remove any open details panel
             const detailsPanel = document.querySelector('.kernel-details-panel');
@@ -1296,12 +1554,6 @@
                     gflops: cells[2].textContent,
                     verified: cells[3].textContent === '✓'
                 });
-
-                // Add extra details if available
-                if (row.hasAttribute('data-details')) {
-                    const details = JSON.parse(row.getAttribute('data-details'));
-                    results.kernels[results.kernels.length - 1].details = details;
-                }
             });
 
             const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(results, null, 2));
