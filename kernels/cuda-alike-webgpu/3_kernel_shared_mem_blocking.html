@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -37,6 +38,8 @@
         const BLOCK_SIZE = 16;  // Reduced from 32 to meet WebGPU limits
         const WORKGROUP_SIZE = BLOCK_SIZE * BLOCK_SIZE;
         const MATRIX_SIZE = 4096;
+        const NUM_ITERATIONS = 16;  // Number of iterations to run
+        const WARMUP_ITERATIONS = 5; // Number of warmup iterations
 
         function calculateGFLOPs(M, N, K, timeInMs) {
             const operations = 2n * BigInt(M) * BigInt(N) * BigInt(K);
@@ -90,6 +93,17 @@
             }
 
             return results;
+        }
+
+        async function runKernel(device, computePipeline, bindGroup, gridDimX, gridDimY) {
+            const commandEncoder = device.createCommandEncoder();
+            const passEncoder = commandEncoder.beginComputePass();
+            passEncoder.setPipeline(computePipeline);
+            passEncoder.setBindGroup(0, bindGroup);
+            passEncoder.dispatchWorkgroups(gridDimX, gridDimY, 1);
+            passEncoder.end();
+            device.queue.submit([commandEncoder.finish()]);
+            await device.queue.onSubmittedWorkDone();
         }
 
         async function init() {
@@ -274,26 +288,58 @@
 
             const setupEndTime = performance.now();
 
-            // Execute kernel
-            const kernelStartTime = performance.now();
-
-            const commandEncoder = device.createCommandEncoder();
-            const passEncoder = commandEncoder.beginComputePass();
-            passEncoder.setPipeline(computePipeline);
-            passEncoder.setBindGroup(0, bindGroup);
-
-            // Following CUDA grid dimension calculation
+            // Execute kernel with warmup and benchmark iterations
+            const benchmarkTimes = [];  // Only store benchmark iteration times
             const gridDimX = Math.ceil(MATRIX_SIZE / BLOCK_SIZE);
             const gridDimY = Math.ceil(MATRIX_SIZE / BLOCK_SIZE);
-            passEncoder.dispatchWorkgroups(gridDimX, gridDimY, 1);
-            passEncoder.end();
+            
+            output.textContent += `Running ${WARMUP_ITERATIONS} warmup iterations...\n\n`;
+            
+            // Create a div for warmup results
+            const warmupDiv = document.createElement('div');
+            warmupDiv.style.fontFamily = 'monospace';
+            warmupDiv.style.color = '#666666';  // Gray color for warmup iterations
+            output.appendChild(warmupDiv);
 
-            device.queue.submit([commandEncoder.finish()]);
+            // Warmup iterations (not counted in results)
+            for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+                const iterStartTime = performance.now();
+                await runKernel(device, computePipeline, bindGroup, gridDimX, gridDimY);
+                const iterEndTime = performance.now();
+                const iterTime = iterEndTime - iterStartTime;
+                
+                const iterGflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, iterTime);
+                const iterSpan = document.createElement('div');
+                iterSpan.textContent = `Warmup ${i + 1}: ${iterTime.toFixed(2)}ms (${iterGflops.toFixed(2)} GFLOP/s)\n`;
+                warmupDiv.appendChild(iterSpan);
+            }
 
-            // Wait for the GPU to finish
-            await device.queue.onSubmittedWorkDone();
-            const kernelEndTime = performance.now();
-            const kernelTime = kernelEndTime - kernelStartTime;
+            output.textContent += `\nRunning ${NUM_ITERATIONS} benchmark iterations...\n\n`;
+            
+            // Create a div for benchmark iteration results
+            const iterationsDiv = document.createElement('div');
+            iterationsDiv.style.fontFamily = 'monospace';
+            output.appendChild(iterationsDiv);
+
+            // Benchmark iterations
+            for (let i = 0; i < NUM_ITERATIONS; i++) {
+                const iterStartTime = performance.now();
+                await runKernel(device, computePipeline, bindGroup, gridDimX, gridDimY);
+                const iterEndTime = performance.now();
+                const iterTime = iterEndTime - iterStartTime;
+                benchmarkTimes.push(iterTime);
+                
+                const iterGflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, iterTime);
+                const iterSpan = document.createElement('div');
+                iterSpan.textContent = `Iteration ${i + 1}: ${iterTime.toFixed(2)}ms (${iterGflops.toFixed(2)} GFLOP/s)\n`;
+                iterSpan.style.color = '#0066cc';
+                iterationsDiv.appendChild(iterSpan);
+            }
+
+            // Calculate average kernel time (only from benchmark iterations)
+            const avgKernelTime = benchmarkTimes.reduce((a, b) => a + b, 0) / NUM_ITERATIONS;
+            const minKernelTime = Math.min(...benchmarkTimes);
+            const maxKernelTime = Math.max(...benchmarkTimes);
 
             // Read back results
             const readbackStartTime = performance.now();
@@ -317,26 +363,32 @@
 
             const readbackEndTime = performance.now();
 
-            const gflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, kernelTime);
+            const avgGflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, avgKernelTime);
+            const maxGflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, minKernelTime);
             
             const statsDiv = document.createElement('div');
             statsDiv.className = 'stats';
             statsDiv.innerHTML = `
 Configuration:
-• Matrix Size: ${MATRIX_SIZE}x${MATRIX_SIZE}
-• Block Size: ${BLOCK_SIZE}
-• Workgroup Size: ${WORKGROUP_SIZE}
-• Grid dimensions: ${gridDimX}x${gridDimY}
+- Matrix Size: ${MATRIX_SIZE}x${MATRIX_SIZE}
+- Block Size: ${BLOCK_SIZE}
+- Workgroup Size: ${WORKGROUP_SIZE}
+- Grid dimensions: ${gridDimX}x${gridDimY}
+- Number of iterations: ${NUM_ITERATIONS}
+- Warmup iterations: ${WARMUP_ITERATIONS}
 
 Timing:
-• Matrix generation: ${(genEndTime - genStartTime).toFixed(2)}ms
-• Setup and buffer creation: ${(setupEndTime - setupStartTime).toFixed(2)}ms
-• Kernel execution: ${kernelTime.toFixed(2)}ms
-• Result readback: ${(readbackEndTime - readbackStartTime).toFixed(2)}ms
+- Matrix generation: ${(genEndTime - genStartTime).toFixed(2)}ms
+- Setup and buffer creation: ${(setupEndTime - setupStartTime).toFixed(2)}ms
+- Average kernel execution: ${avgKernelTime.toFixed(2)}ms
+- Min kernel execution: ${minKernelTime.toFixed(2)}ms
+- Max kernel execution: ${maxKernelTime.toFixed(2)}ms
+- Result readback: ${(readbackEndTime - readbackStartTime).toFixed(2)}ms
 
 Performance:
-• Kernel performance: <span class="gflops">${gflops.toFixed(2)} GFLOP/s</span>
-• Memory per matrix: ${(MATRIX_SIZE * MATRIX_SIZE * 4 / (1024 * 1024)).toFixed(2)} MB
+- Average kernel performance: <span class="gflops">${avgGflops.toFixed(2)} GFLOP/s</span>
+- Peak kernel performance: <span class="gflops">${maxGflops.toFixed(2)} GFLOP/s</span>
+- Memory per matrix: ${(MATRIX_SIZE * MATRIX_SIZE * 4 / (1024 * 1024)).toFixed(2)} MB
 `;
             output.appendChild(statsDiv);
 
@@ -344,8 +396,8 @@ Performance:
             output.textContent += '\nVerifying 50 random positions...\n\n';
 
             const verificationResults = verifyResults(
-                firstMatrix, 
-                secondMatrix, 
+                firstMatrix,
+                secondMatrix,
                 result,
                 MATRIX_SIZE,
                 MATRIX_SIZE,
@@ -365,7 +417,7 @@ Performance:
                               `CPU = ${check.cpuResult.toFixed(6)} ` +
                               `Diff: ${check.diff.toFixed(6)} ` +
                               `${check.isCorrect ? '✓' : '✗'}\n`;
-                
+
                 const span = document.createElement('span');
                 span.textContent = message;
                 span.className = check.isCorrect ? 'correct' : 'incorrect';
@@ -380,9 +432,9 @@ Performance:
             verificationStatsDiv.className = 'stats';
             verificationStatsDiv.textContent = `
 Verification Statistics:
-• Positions checked: 50
-• Maximum difference: ${maxDiff.toFixed(6)}
-• Average difference: ${avgDiff.toFixed(6)}
+- Positions checked: 50
+- Maximum difference: ${maxDiff.toFixed(6)}
+- Average difference: ${avgDiff.toFixed(6)}
 `;
             output.appendChild(verificationStatsDiv);
 
@@ -393,7 +445,7 @@ Verification Statistics:
 
             const perfSpan = document.createElement('div');
             perfSpan.className = 'performance';
-            perfSpan.textContent = `\nKernel execution time: ${kernelTime.toFixed(2)}ms`;
+            perfSpan.textContent = `\nAverage kernel execution time: ${avgKernelTime.toFixed(2)}ms`;
             output.appendChild(perfSpan);
 
             // Clean up
@@ -404,3 +456,4 @@ Verification Statistics:
     </script>
 </body>
 </html>
+

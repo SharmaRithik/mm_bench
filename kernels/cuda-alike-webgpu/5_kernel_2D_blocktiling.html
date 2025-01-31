@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -42,6 +43,8 @@
         const BK = 8;    // Block size K dimension (fixed)
         const TM = 8;    // Thread tile M dimension (fixed)
         const TN = 8;    // Thread tile N dimension (fixed)
+        const NUM_ITERATIONS = 16;  // Number of benchmark iterations
+        const WARMUP_ITERATIONS = 5; // Number of warmup iterations
         
         // Block sizes determined by matrix dimensions (matching CUDA logic)
         const BM = MATRIX_SIZE >= 128 ? 128 : 64;  // Block size M dimension
@@ -49,7 +52,6 @@
         const THREADS_PER_BLOCK = (BM * BN) / (TM * TN);  // Matches CUDA blockDim calculation
 
         function calculateGFLOPs(M, N, K, timeInMs) {
-            // For matrix multiplication, we do M*N*K multiply-adds, which is 2*M*N*K FLOPs
             const operations = 2n * BigInt(M) * BigInt(N) * BigInt(K);
             const timeInSeconds = timeInMs / 1000;
             const gflops = Number(operations) / (timeInSeconds * 1e9);
@@ -103,10 +105,20 @@
             return results;
         }
 
+        async function runKernel(device, computePipeline, bindGroup, gridDimX, gridDimY) {
+            const commandEncoder = device.createCommandEncoder();
+            const passEncoder = commandEncoder.beginComputePass();
+            passEncoder.setPipeline(computePipeline);
+            passEncoder.setBindGroup(0, bindGroup);
+            passEncoder.dispatchWorkgroups(gridDimX, gridDimY);
+            passEncoder.end();
+            device.queue.submit([commandEncoder.finish()]);
+            await device.queue.onSubmittedWorkDone();
+        }
+
         async function init() {
             const output = document.getElementById('output');
             
-            // Log configuration
             console.log(`Matrix Size: ${MATRIX_SIZE}x${MATRIX_SIZE}`);
             console.log(`Block dimensions (BM×BN): ${BM}×${BN}`);
             console.log(`Thread tile dimensions (TM×TN): ${TM}×${TN}`);
@@ -247,7 +259,6 @@
 
             const setupStartTime = performance.now();
 
-            // Buffer and pipeline setup
             const gpuBufferFirstMatrix = device.createBuffer({
                 mappedAtCreation: true,
                 size: firstMatrix.byteLength + 8,
@@ -303,27 +314,54 @@
 
             const setupEndTime = performance.now();
 
-            // Kernel execution with precise timing
-            const kernelStartTime = performance.now();
+            const gridDimX = Math.ceil(MATRIX_SIZE / BN);
+            const gridDimY = Math.ceil(MATRIX_SIZE / BM);
 
-            const commandEncoder = device.createCommandEncoder();
-            const passEncoder = commandEncoder.beginComputePass();
-            passEncoder.setPipeline(computePipeline);
-            passEncoder.setBindGroup(0, bindGroup);
-            passEncoder.dispatchWorkgroups(
-                Math.ceil(MATRIX_SIZE / BN),
-                Math.ceil(MATRIX_SIZE / BM)
-            );
-            passEncoder.end();
+            // Running warmup iterations
+            output.textContent += `Running ${WARMUP_ITERATIONS} warmup iterations...\n\n`;
+	    const warmupDiv = document.createElement('div');
+            warmupDiv.style.fontFamily = 'monospace';
+            warmupDiv.style.color = '#666666';
+            output.appendChild(warmupDiv);
 
-            device.queue.submit([commandEncoder.finish()]);
+            for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+                const iterStartTime = performance.now();
+                await runKernel(device, computePipeline, bindGroup, gridDimX, gridDimY);
+                const iterEndTime = performance.now();
+                const iterTime = iterEndTime - iterStartTime;
+                
+                const iterGflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, iterTime);
+                const iterSpan = document.createElement('div');
+                iterSpan.textContent = `Warmup ${i + 1}: ${iterTime.toFixed(2)}ms (${iterGflops.toFixed(2)} GFLOP/s)\n`;
+                warmupDiv.appendChild(iterSpan);
+            }
 
-            // Wait for the GPU to finish
-            await device.queue.onSubmittedWorkDone();
-            const kernelEndTime = performance.now();
-            const kernelTime = kernelEndTime - kernelStartTime;
+            // Running benchmark iterations
+            output.textContent += `\nRunning ${NUM_ITERATIONS} benchmark iterations...\n\n`;
+            const iterationsDiv = document.createElement('div');
+            iterationsDiv.style.fontFamily = 'monospace';
+            output.appendChild(iterationsDiv);
 
-            // Result readback timing
+            const benchmarkTimes = [];
+            for (let i = 0; i < NUM_ITERATIONS; i++) {
+                const iterStartTime = performance.now();
+                await runKernel(device, computePipeline, bindGroup, gridDimX, gridDimY);
+                const iterEndTime = performance.now();
+                const iterTime = iterEndTime - iterStartTime;
+                benchmarkTimes.push(iterTime);
+                
+                const iterGflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, iterTime);
+                const iterSpan = document.createElement('div');
+                iterSpan.textContent = `Iteration ${i + 1}: ${iterTime.toFixed(2)}ms (${iterGflops.toFixed(2)} GFLOP/s)\n`;
+                iterationsDiv.appendChild(iterSpan);
+            }
+
+            // Calculate statistics from benchmark iterations
+            const avgKernelTime = benchmarkTimes.reduce((a, b) => a + b, 0) / NUM_ITERATIONS;
+            const minKernelTime = Math.min(...benchmarkTimes);
+            const maxKernelTime = Math.max(...benchmarkTimes);
+
+            // Read back results
             const readbackStartTime = performance.now();
 
             const gpuReadBuffer = device.createBuffer({
@@ -345,7 +383,8 @@
 
             const readbackEndTime = performance.now();
 
-            const gflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, kernelTime);
+            const avgGflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, avgKernelTime);
+            const maxGflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, minKernelTime);
             
             const statsDiv = document.createElement('div');
             statsDiv.className = 'stats';
@@ -361,20 +400,24 @@ CUDA-like Configuration:
 Detailed Timing:
 • Matrix generation: ${(genEndTime - genStartTime).toFixed(2)}ms
 • Setup and buffer creation: ${(setupEndTime - setupStartTime).toFixed(2)}ms
-• Kernel execution: ${kernelTime.toFixed(2)}ms
+• Average kernel execution: ${avgKernelTime.toFixed(2)}ms
+• Min kernel execution: ${minKernelTime.toFixed(2)}ms
+• Max kernel execution: ${maxKernelTime.toFixed(2)}ms
 • Result readback: ${(readbackEndTime - readbackStartTime).toFixed(2)}ms
 
 Performance:
-• Kernel performance: <span class="gflops">${gflops.toFixed(2)} GFLOP/s</span>
+• Average performance: ${avgGflops.toFixed(2)} GFLOP/s
+• Peak performance: ${maxGflops.toFixed(2)} GFLOP/s
 • Memory per matrix: ${(MATRIX_SIZE * MATRIX_SIZE * 4 / (1024 * 1024)).toFixed(2)} MB
 `;
             output.appendChild(statsDiv);
 
+            // Verify results
             output.textContent += '\nVerifying 50 random positions...\n\n';
 
             const verificationResults = verifyResults(
-                firstMatrix, 
-                secondMatrix, 
+                firstMatrix,
+                secondMatrix,
                 result,
                 MATRIX_SIZE,
                 MATRIX_SIZE,
@@ -422,7 +465,7 @@ Verification Statistics:
 
             const perfSpan = document.createElement('div');
             perfSpan.className = 'performance';
-            perfSpan.textContent = `\nKernel execution time: ${kernelTime.toFixed(2)}ms`;
+            perfSpan.textContent = `\nAverage kernel execution time: ${avgKernelTime.toFixed(2)}ms`;
             output.appendChild(perfSpan);
 
             // Clean up
@@ -433,3 +476,4 @@ Verification Statistics:
     </script>
 </body>
 </html>
+

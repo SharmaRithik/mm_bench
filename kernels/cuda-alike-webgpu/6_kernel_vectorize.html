@@ -30,7 +30,7 @@
     </style>
 </head>
 <body>
-    <h1>WebGPU Matrix Multiplication - CUDA Match (Optimized)</h1>
+    <h1>WebGPU Matrix Multiplication - CUDA Match (Optimized) with Iterations</h1>
     <div id="output"></div>
     <script type="text/javascript">
         const MATRIX_SIZE = 4096;
@@ -38,6 +38,8 @@
         const BK = 8;
         const TM = 8;
         const TN = 8;
+        const NUM_ITERATIONS = 16;  // Number of benchmark iterations
+        const WARMUP_ITERATIONS = 5; // Number of warmup iterations
 
         // Block size selection function matching CUDA launcher
         function getBlockDimensions(M, N) {
@@ -101,6 +103,17 @@
             return results;
         }
 
+        async function runKernel(device, computePipeline, bindGroup, gridDimX, gridDimY) {
+            const commandEncoder = device.createCommandEncoder();
+            const passEncoder = commandEncoder.beginComputePass();
+            passEncoder.setPipeline(computePipeline);
+            passEncoder.setBindGroup(0, bindGroup);
+            passEncoder.dispatchWorkgroups(gridDimX, gridDimY, 1);
+            passEncoder.end();
+            device.queue.submit([commandEncoder.finish()]);
+            await device.queue.onSubmittedWorkDone();
+        }
+
         async function init() {
             const output = document.getElementById('output');
             
@@ -116,6 +129,7 @@
             }
             const device = await adapter.requestDevice();
 
+            // Your existing shader module code remains exactly the same
             const shaderModule = device.createShaderModule({
                 code: `
                     struct Matrix {
@@ -144,7 +158,8 @@
 
                     var<workgroup> As: array<f32, 128 * 8>;  // BM * BK max size
                     var<workgroup> Bs: array<f32, 8 * 128>;  // BK * BN max size
-		    @compute @workgroup_size(256, 1, 1)
+
+                    @compute @workgroup_size(256, 1, 1)
                     fn main(
                         @builtin(workgroup_id) blockIdx : vec3<u32>,
                         @builtin(local_invocation_id) threadIdx : vec3<u32>
@@ -160,7 +175,6 @@
                         let innerRowB = threadIdx.x / (uniforms.BN / 4u);
                         let innerColB = threadIdx.x % (uniforms.BN / 4u);
 
-                        // Initialize pointers as in CUDA
                         var a_ptr = cRow * uniforms.BM * uniforms.K;
                         var b_ptr = cCol * uniforms.BN;
                         var c_ptr = cRow * uniforms.BM * uniforms.N + cCol * uniforms.BN;
@@ -169,13 +183,11 @@
                         var regM: array<f32, TM>;
                         var regN: array<f32, TN>;
 
-                        // Initialize results
                         for (var i = 0u; i < TM * TN; i = i + 1u) {
                             threadResults[i] = 0.0;
                         }
 
                         for (var bkIdx = 0u; bkIdx < uniforms.K; bkIdx = bkIdx + BK) {
-                            // Load A with vec4 operations
                             let loadA_idx = a_ptr + innerRowA * uniforms.K + innerColA * 4u;
                             let tmpA = vec4<f32>(
                                 A.numbers[loadA_idx],
@@ -190,7 +202,6 @@
                             As[(innerColA * 4u + 2u) * uniforms.BM + as_offset] = tmpA.z;
                             As[(innerColA * 4u + 3u) * uniforms.BM + as_offset] = tmpA.w;
 
-                            // Load B with vec4 operations
                             let loadB_idx = b_ptr + innerRowB * uniforms.N + innerColB * 4u;
                             let tmpB = vec4<f32>(
                                 B.numbers[loadB_idx],
@@ -207,16 +218,13 @@
 
                             workgroupBarrier();
 
-                            // Advance pointers as in CUDA
                             a_ptr = a_ptr + BK;
                             b_ptr = b_ptr + BK * uniforms.N;
 
-                            // Compute with loop unrolling
                             for (var dotIdx = 0u; dotIdx < BK; dotIdx = dotIdx + 1u) {
                                 let as_row_offset = dotIdx * uniforms.BM + threadRow * TM;
                                 let bs_row_offset = dotIdx * uniforms.BN + threadCol * TN;
 
-                                // Load into registers (unrolled for TM=8)
                                 regM[0] = As[as_row_offset];
                                 regM[1] = As[as_row_offset + 1u];
                                 regM[2] = As[as_row_offset + 2u];
@@ -226,7 +234,6 @@
                                 regM[6] = As[as_row_offset + 6u];
                                 regM[7] = As[as_row_offset + 7u];
 
-                                // Load into registers (unrolled for TN=8)
                                 regN[0] = Bs[bs_row_offset];
                                 regN[1] = Bs[bs_row_offset + 1u];
                                 regN[2] = Bs[bs_row_offset + 2u];
@@ -236,7 +243,6 @@
                                 regN[6] = Bs[bs_row_offset + 6u];
                                 regN[7] = Bs[bs_row_offset + 7u];
 
-                                // Compute matrix multiplication with manual unrolling
                                 for (var resIdxM = 0u; resIdxM < TM; resIdxM = resIdxM + 1u) {
                                     let reg_m = regM[resIdxM];
                                     let res_offset = resIdxM * TN;
@@ -254,7 +260,6 @@
                             workgroupBarrier();
                         }
 
-                        // Write results with vectorized writes
                         for (var resIdxM = 0u; resIdxM < TM; resIdxM += 1u) {
                             let c_row = cRow * uniforms.BM + threadRow * TM + resIdxM;
                             if (c_row >= uniforms.M) { break; }
@@ -310,7 +315,7 @@
             // Get block dimensions based on matrix size (matching CUDA launcher)
             const { BM, BN } = getBlockDimensions(MATRIX_SIZE, MATRIX_SIZE);
 
-            // Create and initialize GPU buffers
+	    // Create and initialize GPU buffers
             const gpuBufferFirstMatrix = device.createBuffer({
                 mappedAtCreation: true,
                 size: firstMatrix.byteLength + 8,
@@ -356,7 +361,6 @@
                 new Uint32Array([BM, BN])
             );
 
-            // Create bind group layout and pipeline
             const bindGroupLayout = device.createBindGroupLayout({
                 entries: [
                     { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" }},
@@ -390,26 +394,53 @@
 
             const setupEndTime = performance.now();
 
-            // Execute kernel
-            const kernelStartTime = performance.now();
-
-            const commandEncoder = device.createCommandEncoder();
-            const passEncoder = commandEncoder.beginComputePass();
-            passEncoder.setPipeline(computePipeline);
-            passEncoder.setBindGroup(0, bindGroup);
-
             // Calculate grid dimensions exactly as CUDA launcher
             const gridDimX = Math.ceil(MATRIX_SIZE / BN);
             const gridDimY = Math.ceil(MATRIX_SIZE / BM);
-            passEncoder.dispatchWorkgroups(gridDimX, gridDimY, 1);
-            passEncoder.end();
 
-            device.queue.submit([commandEncoder.finish()]);
+            // Run warmup iterations
+            output.textContent += `Running ${WARMUP_ITERATIONS} warmup iterations...\n\n`;
+            const warmupDiv = document.createElement('div');
+            warmupDiv.style.fontFamily = 'monospace';
+            warmupDiv.style.color = '#666666';
+            output.appendChild(warmupDiv);
 
-            // Wait for the GPU to finish
-            await device.queue.onSubmittedWorkDone();
-            const kernelEndTime = performance.now();
-            const kernelTime = kernelEndTime - kernelStartTime;
+            for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+                const iterStartTime = performance.now();
+                await runKernel(device, computePipeline, bindGroup, gridDimX, gridDimY);
+                const iterEndTime = performance.now();
+                const iterTime = iterEndTime - iterStartTime;
+                
+                const iterGflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, iterTime);
+                const iterSpan = document.createElement('div');
+                iterSpan.textContent = `Warmup ${i + 1}: ${iterTime.toFixed(2)}ms (${iterGflops.toFixed(2)} GFLOP/s)\n`;
+                warmupDiv.appendChild(iterSpan);
+            }
+
+            // Run benchmark iterations
+            output.textContent += `\nRunning ${NUM_ITERATIONS} benchmark iterations...\n\n`;
+            const iterationsDiv = document.createElement('div');
+            iterationsDiv.style.fontFamily = 'monospace';
+            output.appendChild(iterationsDiv);
+
+            const benchmarkTimes = [];
+            for (let i = 0; i < NUM_ITERATIONS; i++) {
+                const iterStartTime = performance.now();
+                await runKernel(device, computePipeline, bindGroup, gridDimX, gridDimY);
+                const iterEndTime = performance.now();
+                const iterTime = iterEndTime - iterStartTime;
+                benchmarkTimes.push(iterTime);
+                
+                const iterGflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, iterTime);
+                const iterSpan = document.createElement('div');
+                iterSpan.textContent = `Iteration ${i + 1}: ${iterTime.toFixed(2)}ms (${iterGflops.toFixed(2)} GFLOP/s)\n`;
+                iterationsDiv.appendChild(iterSpan);
+            }
+
+            // Calculate statistics
+            const avgKernelTime = benchmarkTimes.reduce((a, b) => a + b, 0) / NUM_ITERATIONS;
+            const minKernelTime = Math.min(...benchmarkTimes);
+            const maxKernelTime = Math.max(...benchmarkTimes);
 
             // Read back results
             const readbackStartTime = performance.now();
@@ -430,11 +461,12 @@
 
             await gpuReadBuffer.mapAsync(GPUMapMode.READ);
             const result = new Float32Array(gpuReadBuffer.getMappedRange().slice(8));
-
+            
             const readbackEndTime = performance.now();
 
-            const gflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, kernelTime);
-
+            const avgGflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, avgKernelTime);
+            const maxGflops = calculateGFLOPs(MATRIX_SIZE, MATRIX_SIZE, MATRIX_SIZE, minKernelTime);
+            
             const statsDiv = document.createElement('div');
             statsDiv.className = 'stats';
             statsDiv.innerHTML = `
@@ -449,11 +481,14 @@ Configuration:
 Timing:
 • Matrix generation: ${(genEndTime - genStartTime).toFixed(2)}ms
 • Setup and buffer creation: ${(setupEndTime - setupStartTime).toFixed(2)}ms
-• Kernel execution: ${kernelTime.toFixed(2)}ms
+• Average kernel execution: ${avgKernelTime.toFixed(2)}ms
+• Min kernel execution: ${minKernelTime.toFixed(2)}ms
+• Max kernel execution: ${maxKernelTime.toFixed(2)}ms
 • Result readback: ${(readbackEndTime - readbackStartTime).toFixed(2)}ms
 
 Performance:
-• Kernel performance: <span class="gflops">${gflops.toFixed(2)} GFLOP/s</span>
+• Average performance: ${avgGflops.toFixed(2)} GFLOP/s
+• Peak performance: ${maxGflops.toFixed(2)} GFLOP/s
 • Memory per matrix: ${(MATRIX_SIZE * MATRIX_SIZE * 4 / (1024 * 1024)).toFixed(2)} MB
 `;
             output.appendChild(statsDiv);
@@ -511,7 +546,7 @@ Verification Statistics:
 
             const perfSpan = document.createElement('div');
             perfSpan.className = 'performance';
-            perfSpan.textContent = `\nKernel execution time: ${kernelTime.toFixed(2)}ms`;
+            perfSpan.textContent = `\nAverage kernel execution time: ${avgKernelTime.toFixed(2)}ms`;
             output.appendChild(perfSpan);
 
             // Clean up
@@ -522,3 +557,4 @@ Verification Statistics:
     </script>
 </body>
 </html>
+

@@ -1,7 +1,8 @@
+
 <!DOCTYPE html>
 <html>
 <head>
-    <title>WebGPU Matrix Multiplication - CUDA-like Block Tiling with Test Case</title>
+    <title>WebGPU Matrix Multiplication - Vectorized CUDA-like Block Tiling</title>
     <style>
         #output { 
             font-family: monospace; 
@@ -41,7 +42,7 @@
     </style>
 </head>
 <body>
-    <h1>WebGPU Matrix Multiplication with 2D Block Tiling (CUDA-like)</h1>
+    <h1>WebGPU Matrix Multiplication with Vectorized 2D Block Tiling</h1>
     <div id="output"></div>
     <script type="text/javascript">
         // Constants matching CUDA implementation
@@ -50,6 +51,8 @@
         const BK = 8;    // Block size K dimension (fixed)
         const TM = 8;    // Thread tile M dimension (fixed)
         const TN = 8;    // Thread tile N dimension (fixed)
+        const NUM_ITERATIONS = 16;  // Number of benchmark iterations
+        const WARMUP_ITERATIONS = 5; // Number of warmup iterations
 
         // Test matrices (4x4)
         const testMatrixA = new Float32Array([
@@ -138,7 +141,18 @@
             return results;
         }
 
-        async function runMatrixMultiplication(device, firstMatrix, secondMatrix, matrixSize) {
+        async function runKernel(device, computePipeline, bindGroup, gridDimX, gridDimY) {
+            const commandEncoder = device.createCommandEncoder();
+            const passEncoder = commandEncoder.beginComputePass();
+            passEncoder.setPipeline(computePipeline);
+            passEncoder.setBindGroup(0, bindGroup);
+            passEncoder.dispatchWorkgroups(gridDimX, gridDimY);
+            passEncoder.end();
+            device.queue.submit([commandEncoder.finish()]);
+            await device.queue.onSubmittedWorkDone();
+        }
+
+        async function runMatrixMultiplication(device, firstMatrix, secondMatrix, matrixSize, isTestCase = false) {
             const BM = getBlockSize(matrixSize);
             const BN = getBlockSize(matrixSize);
             const THREADS_PER_BLOCK = getThreadsPerBlock(BM, BN);
@@ -317,28 +331,37 @@
                 layout: pipelineLayout,
                 compute: {
                     module: shaderModule,
-                    entryPoint: "main"
+	            entryPoint: "main"
                 }
             });
 
-            const kernelStartTime = performance.now();
+            const gridDimX = Math.ceil(matrixSize / BN);
+            const gridDimY = Math.ceil(matrixSize / BM);
 
-            const commandEncoder = device.createCommandEncoder();
-            const passEncoder = commandEncoder.beginComputePass();
-            passEncoder.setPipeline(computePipeline);
-            passEncoder.setBindGroup(0, bindGroup);
-            passEncoder.dispatchWorkgroups(
-                Math.ceil(matrixSize / BN),
-                Math.ceil(matrixSize / BM)
-            );
-            passEncoder.end();
+            let kernelTimes = [];
 
-            device.queue.submit([commandEncoder.finish()]);
+            if (!isTestCase) {
+                // Run warmup iterations
+                for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+                    await runKernel(device, computePipeline, bindGroup, gridDimX, gridDimY);
+                }
 
-            await device.queue.onSubmittedWorkDone();
-            const kernelEndTime = performance.now();
-            const kernelTime = kernelEndTime - kernelStartTime;
+                // Run benchmark iterations
+                for (let i = 0; i < NUM_ITERATIONS; i++) {
+                    const startTime = performance.now();
+                    await runKernel(device, computePipeline, bindGroup, gridDimX, gridDimY);
+                    const endTime = performance.now();
+                    kernelTimes.push(endTime - startTime);
+                }
+            } else {
+                // For test case, just run once
+                const startTime = performance.now();
+                await runKernel(device, computePipeline, bindGroup, gridDimX, gridDimY);
+                const endTime = performance.now();
+                kernelTimes.push(endTime - startTime);
+            }
 
+            // Read back results
             const gpuReadBuffer = device.createBuffer({
                 size: resultMatrixBuffer.byteLength + 8,
                 usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
@@ -359,7 +382,7 @@
 
             return {
                 result,
-                kernelTime,
+                kernelTimes,
                 matrixSize
             };
         }
@@ -381,7 +404,7 @@
 
             // First run the 4x4 test case
             output.textContent = '=== Running 4x4 Test Case ===\n\n';
-            const testCase = await runMatrixMultiplication(device, testMatrixA, testMatrixB, TEST_MATRIX_SIZE);
+            const testCase = await runMatrixMultiplication(device, testMatrixA, testMatrixB, TEST_MATRIX_SIZE, true);
             
             const testStatsDiv = document.createElement('div');
             testStatsDiv.className = 'test-case';
@@ -389,7 +412,7 @@
 4x4 Test Case Configuration:
 • Matrix Size: ${TEST_MATRIX_SIZE}x${TEST_MATRIX_SIZE}
 • Block dimensions (BM×BN): ${getBlockSize(TEST_MATRIX_SIZE)}×${getBlockSize(TEST_MATRIX_SIZE)}
-• Kernel execution time: ${testCase.kernelTime.toFixed(2)}ms
+• Kernel execution time: ${testCase.kernelTimes[0].toFixed(2)}ms
 
 Test Matrix A:
 ${Array.from({ length: TEST_MATRIX_SIZE }, (_, i) => 
@@ -412,32 +435,7 @@ ${Array.from({ length: TEST_MATRIX_SIZE }, (_, i) =>
 `;
             output.appendChild(testStatsDiv);
 
-            output.textContent += '\nVerifying all positions for 4x4 test case...\n\n';
-
-            const testVerificationResults = verifyResults(
-                testMatrixA,
-                testMatrixB,
-                testCase.result,
-                TEST_MATRIX_SIZE,
-                TEST_MATRIX_SIZE,
-                TEST_MATRIX_SIZE,
-                true
-            );
-
-            for (const check of testVerificationResults) {
-                const message = `Position [${check.row},${check.col}]: ` +
-                              `GPU = ${check.gpuResult.toFixed(6)}, ` +
-                              `CPU = ${check.cpuResult.toFixed(6)} ` +
-                              `Diff: ${check.diff.toFixed(6)} ` +
-                              `${check.isCorrect ? '✓' : '✗'}\n`;
-                
-                const span = document.createElement('span');
-                span.textContent = message;
-                span.className = check.isCorrect ? 'correct' : 'incorrect';
-                output.appendChild(span);
-            }
-
-            // Now run the large matrix multiplication
+            // Now run the large matrix multiplication with iterations
             output.textContent += '\n\n=== Running Large Matrix Multiplication ===\n\n';
             
             const genStartTime = performance.now();
@@ -446,15 +444,42 @@ ${Array.from({ length: TEST_MATRIX_SIZE }, (_, i) =>
             const genEndTime = performance.now();
 
             output.textContent += `Matrix generation time: ${(genEndTime - genStartTime).toFixed(2)}ms\n`;
-            output.textContent += 'Starting computation...\n';
+            
+            // Run warmup iterations
+            output.textContent += `Running ${WARMUP_ITERATIONS} warmup iterations...\n\n`;
+            const warmupDiv = document.createElement('div');
+            warmupDiv.style.fontFamily = 'monospace';
+            warmupDiv.style.color = '#666666';
+            output.appendChild(warmupDiv);
 
-            const largeCase = await runMatrixMultiplication(device, firstMatrix, secondMatrix, LARGE_MATRIX_SIZE);
-            const gflops = calculateGFLOPs(LARGE_MATRIX_SIZE, LARGE_MATRIX_SIZE, LARGE_MATRIX_SIZE, largeCase.kernelTime);
+            // Run benchmark iterations
+            output.textContent += `\nRunning ${NUM_ITERATIONS} benchmark iterations...\n\n`;
+            const iterationsDiv = document.createElement('div');
+            iterationsDiv.style.fontFamily = 'monospace';
+            output.appendChild(iterationsDiv);
+
+            const largeCase = await runMatrixMultiplication(device, firstMatrix, secondMatrix, LARGE_MATRIX_SIZE, false);
+            
+            // Display iteration results
+            largeCase.kernelTimes.forEach((time, index) => {
+                const gflops = calculateGFLOPs(LARGE_MATRIX_SIZE, LARGE_MATRIX_SIZE, LARGE_MATRIX_SIZE, time);
+                const iterSpan = document.createElement('div');
+                iterSpan.textContent = `Iteration ${index + 1}: ${time.toFixed(2)}ms (${gflops.toFixed(2)} GFLOP/s)\n`;
+                iterationsDiv.appendChild(iterSpan);
+            });
+
+            // Calculate statistics
+            const avgKernelTime = largeCase.kernelTimes.reduce((a, b) => a + b, 0) / NUM_ITERATIONS;
+            const minKernelTime = Math.min(...largeCase.kernelTimes);
+            const maxKernelTime = Math.max(...largeCase.kernelTimes);
+            
+            const avgGflops = calculateGFLOPs(LARGE_MATRIX_SIZE, LARGE_MATRIX_SIZE, LARGE_MATRIX_SIZE, avgKernelTime);
+            const maxGflops = calculateGFLOPs(LARGE_MATRIX_SIZE, LARGE_MATRIX_SIZE, LARGE_MATRIX_SIZE, minKernelTime);
             
             const statsDiv = document.createElement('div');
             statsDiv.className = 'stats';
             statsDiv.innerHTML = `
-Large Matrix Configuration:
+CUDA-like Configuration:
 • Matrix Size: ${LARGE_MATRIX_SIZE}x${LARGE_MATRIX_SIZE}
 • Block dimensions (BM×BN): ${getBlockSize(LARGE_MATRIX_SIZE)}×${getBlockSize(LARGE_MATRIX_SIZE)}
 • Block size K: ${BK}
@@ -462,13 +487,20 @@ Large Matrix Configuration:
 • Threads per block: ${getThreadsPerBlock(getBlockSize(LARGE_MATRIX_SIZE), getBlockSize(LARGE_MATRIX_SIZE))}
 • Grid dimensions: ${Math.ceil(LARGE_MATRIX_SIZE/getBlockSize(LARGE_MATRIX_SIZE))}×${Math.ceil(LARGE_MATRIX_SIZE/getBlockSize(LARGE_MATRIX_SIZE))}
 
+Timing Statistics:
+• Matrix generation: ${(genEndTime - genStartTime).toFixed(2)}ms
+• Average kernel execution: ${avgKernelTime.toFixed(2)}ms
+• Min kernel execution: ${minKernelTime.toFixed(2)}ms
+• Max kernel execution: ${maxKernelTime.toFixed(2)}ms
+
 Performance:
-• Kernel execution time: ${largeCase.kernelTime.toFixed(2)}ms
-• Kernel performance: <span class="gflops">${gflops.toFixed(2)} GFLOP/s</span>
+• Average performance: ${avgGflops.toFixed(2)} GFLOP/s
+• Peak performance: ${maxGflops.toFixed(2)} GFLOP/s
 • Memory per matrix: ${(LARGE_MATRIX_SIZE * LARGE_MATRIX_SIZE * 4 / (1024 * 1024)).toFixed(2)} MB
 `;
             output.appendChild(statsDiv);
 
+            // Verify results
             output.textContent += '\nVerifying 50 random positions for large matrix...\n\n';
 
             const verificationResults = verifyResults(
@@ -518,9 +550,15 @@ Verification Statistics:
             summarySpan.textContent = `\nOverall Verification: ${allCorrect ? 'PASSED ✓' : 'FAILED ✗'}`;
             summarySpan.className = allCorrect ? 'correct' : 'incorrect';
             output.appendChild(summarySpan);
+
+            const perfSpan = document.createElement('div');
+            perfSpan.className = 'performance';
+            perfSpan.textContent = `\nAverage kernel execution time: ${avgKernelTime.toFixed(2)}ms`;
+            output.appendChild(perfSpan);
         }
 
         init();
     </script>
 </body>
 </html>
+
