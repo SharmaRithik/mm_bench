@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Matrix Multiplication - Kernel 0 (WebGPU Adapted)</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .error {
+            color: red;
+            font-weight: bold;
+        }
+        .success {
+            color: green;
+            font-weight: bold;
+        }
+        canvas {
+            display: none;
+        }
+        .note {
+            background-color: #fff3cd;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .config {
+            margin: 20px 0;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .summary-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background-color: #f8f9fa;
+        }
+        .summary-table th, .summary-table td {
+            padding: 12px;
+            text-align: left;
+            border: 1px solid #dee2e6;
+        }
+        .summary-table th {
+            background-color: #e9ecef;
+            font-weight: bold;
+        }
+        .summary-table tr:nth-child(even) {
+            background-color: #f1f3f5;
+        }
+    </style>
+</head>
+<body>
+    <h1>Matrix Multiplication - Kernel 0 (WebGPU Adapted)</h1>
+    <div class="note">
+        <strong>WebGPU Environment Adaptations:</strong><br>
+        - Matrix size reduced to 1024x1024 (from 2048x2048)<br>
+        - Workgroup size limited to 256 (scaled down from CUDA configurations)<br>
+        - Same computational logic as CUDA kernel
+    </div>
+    <canvas id="webgpu-canvas"></canvas>
+    <div id="status">Initializing WebGPU...</div>
+    <div id="summary"></div>
+    <div id="results"></div>
+
+    <script type="module">
+        // WebGPU environment constraints
+        const MATRIX_SIZE = 1024; 
+        const NUM_RANDOM_CHECKS = 128;
+
+        // Thread configurations for WebGPU
+        // All configurations have a total of 256 threads (except 8x8 which has 64)
+        const THREAD_CONFIGS = [
+            { x: 32, y: 8 },   // 256 threads - wide configuration
+            { x: 8, y: 32 },   // 256 threads - tall configuration
+            { x: 16, y: 16 },  // 256 threads - square configuration
+            { x: 8, y: 8 },    // 64 threads - small square configuration
+            { x: 64, y: 4 },   // 256 threads - very wide configuration
+            { x: 4, y: 64 }    // 256 threads - very tall configuration
+        ];
+
+        // WGSL shader code
+        function getShaderCode(threadsX, threadsY) {
+            return `
+                struct Matrix {
+                    data: array<f32>,
+                }
+                @group(0) @binding(0) var<storage, read> matrixA: Matrix;
+                @group(0) @binding(1) var<storage, read> matrixB: Matrix;
+                @group(0) @binding(2) var<storage, read_write> matrixC: Matrix;
+
+                @compute @workgroup_size(${threadsX}, ${threadsY})
+                fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+                    let row = id.y;
+                    let col = id.x;
+                    var value = 0.0;
+                    
+                    for (var k = 0u; k < ${MATRIX_SIZE}u; k = k + 1u) {
+                        value = value + matrixA.data[row * ${MATRIX_SIZE}u + k] * matrixB.data[k * ${MATRIX_SIZE}u + col];
+                    }
+                    matrixC.data[row * ${MATRIX_SIZE}u + col] = value;
+                }
+            `;
+        }
+
+        // Initialize WebGPU
+        async function initWebGPU() {
+            if (!navigator.gpu) {
+                throw new Error('WebGPU not supported');
+            }
+
+            const adapter = await navigator.gpu.requestAdapter();
+            if (!adapter) {
+                throw new Error('No GPU adapter found');
+            }
+
+            const device = await adapter.requestDevice();
+            const canvas = document.getElementById('webgpu-canvas');
+            const context = canvas.getContext('webgpu');
+
+            // Configure the canvas context
+            const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
+            context.configure({
+                device: device,
+                format: canvasFormat,
+                alphaMode: 'premultiplied',
+            });
+
+            // Create buffers
+            const matrixSize = MATRIX_SIZE * MATRIX_SIZE;  // 1024 * 1024 = 1048576
+            const bufferSize = matrixSize * 4; // 4 bytes per float
+
+            const matrixABuffer = device.createBuffer({
+                size: bufferSize,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+            });
+
+            const matrixBBuffer = device.createBuffer({
+                size: bufferSize,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+            });
+
+            const matrixCBuffer = device.createBuffer({
+                size: bufferSize,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+            });
+
+            // Create staging buffer for reading results
+            const stagingBuffer = device.createBuffer({
+                size: bufferSize,
+                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+            });
+
+            return {
+                device,
+                matrixABuffer,
+                matrixBBuffer,
+                matrixCBuffer,
+                stagingBuffer
+            };
+        }
+
+        // Generate random matrices
+        function generateRandomMatrix(size) {
+            const matrix = new Float32Array(size * size);
+            for (let i = 0; i < matrix.length; i++) {
+                matrix[i] = Math.random() * 2 - 1; // Random values between -1 and 1
+            }
+            return matrix;
+        }
+
+        // CPU reference implementation
+        function matrixMultiplyCPU(A, B, n) {
+            const C = new Float32Array(n * n);
+            for (let i = 0; i < n; i++) {
+                for (let j = 0; j < n; j++) {
+                    let sum = 0;
+                    for (let k = 0; k < n; k++) {
+                        sum += A[i * n + k] * B[k * n + j];
+                    }
+                    C[i * n + j] = sum;
+                }
+            }
+            return C;
+        }
+
+        // Run single configuration
+        async function runConfig(device, buffers, config, isWarmup = false) {
+            const { matrixABuffer, matrixBBuffer, matrixCBuffer, stagingBuffer } = buffers;
+            
+            // Create shader module
+            const shaderModule = device.createShaderModule({
+                code: getShaderCode(config.x, config.y)
+            });
+
+            // Create pipeline
+            const pipeline = device.createComputePipeline({
+                layout: 'auto',
+                compute: {
+                    module: shaderModule,
+                    entryPoint: 'main'
+                }
+            });
+
+            // Create bind group
+            const bindGroup = device.createBindGroup({
+                layout: pipeline.getBindGroupLayout(0),
+                entries: [
+                    { binding: 0, resource: { buffer: matrixABuffer } },
+                    { binding: 1, resource: { buffer: matrixBBuffer } },
+                    { binding: 2, resource: { buffer: matrixCBuffer } }
+                ]
+            });
+
+            // Start timing
+            const startTime = performance.now();
+
+            // Create command encoder and compute pass
+            const commandEncoder = device.createCommandEncoder();
+            const computePass = commandEncoder.beginComputePass();
+            computePass.setPipeline(pipeline);
+            computePass.setBindGroup(0, bindGroup);
+            computePass.dispatchWorkgroups(MATRIX_SIZE / config.x, MATRIX_SIZE / config.y);
+            computePass.end();
+
+            // Copy results to staging buffer
+            commandEncoder.copyBufferToBuffer(
+                matrixCBuffer, 0,
+                stagingBuffer, 0,
+                MATRIX_SIZE * MATRIX_SIZE * 4
+            );
+
+            // Submit commands
+            device.queue.submit([commandEncoder.finish()]);
+
+            // Read results from staging buffer
+            const resultMatrix = new Float32Array(MATRIX_SIZE * MATRIX_SIZE);
+            await stagingBuffer.mapAsync(GPUMapMode.READ);
+            const arrayBuffer = stagingBuffer.getMappedRange();
+            resultMatrix.set(new Float32Array(arrayBuffer));
+            stagingBuffer.unmap();
+
+            // End timing
+            const endTime = performance.now();
+            const executionTime = endTime - startTime;
+
+            return { resultMatrix, executionTime };
+        }
+
+        // Calculate GFLOPs
+        function calculateGFLOPs(executionTimeMs) {
+            // For matrix multiplication: 2 * N^3 operations
+            const operations = 2 * MATRIX_SIZE * MATRIX_SIZE * MATRIX_SIZE;
+            const gflops = (operations / (executionTimeMs / 1000)) / 1e9;
+            return gflops;
+        }
+
+        // Calculate statistics for performance measurements
+        function calculateStats(measurements) {
+            // Calculate mean and standard deviation
+            const mean = measurements.reduce((a, b) => a + b, 0) / measurements.length;
+            const variance = measurements.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / measurements.length;
+            const stdDev = Math.sqrt(variance);
+            
+            return {
+                mean: mean,
+                min: Math.min(...measurements),
+                max: Math.max(...measurements),
+                stdDev: stdDev
+            };
+        }
+
+        // Main execution
+        async function run() {
+            try {
+                const gpu = await initWebGPU();
+                const { device, matrixABuffer, matrixBBuffer, matrixCBuffer, stagingBuffer } = gpu;
+
+                // Generate random matrices
+                const matrixA = generateRandomMatrix(MATRIX_SIZE);
+                const matrixB = generateRandomMatrix(MATRIX_SIZE);
+
+                // Upload matrices to GPU
+                device.queue.writeBuffer(matrixABuffer, 0, matrixA);
+                device.queue.writeBuffer(matrixBBuffer, 0, matrixB);
+
+                const resultsDiv = document.getElementById('results');
+                resultsDiv.innerHTML = ''; // Clear previous results
+
+                // Create summary table
+                const summaryDiv = document.getElementById('summary');
+                const summaryTable = document.createElement('table');
+                summaryTable.className = 'summary-table';
+                summaryTable.innerHTML = `
+                    <tr>
+                        <th>Configuration</th>
+                        <th>Matrix Size</th>
+                        <th>Workgroup Size</th>
+                        <th>Avg Time (ms)</th>
+                        <th>GFLOPs</th>
+                        <th>Verification</th>
+                    </tr>
+                `;
+                summaryDiv.appendChild(summaryTable);
+
+                // Run CPU reference implementation
+                const cpuResult = matrixMultiplyCPU(matrixA, matrixB, MATRIX_SIZE);
+
+                // Try each thread configuration sequentially
+                for (let i = 0; i < THREAD_CONFIGS.length; i++) {
+                    const config = THREAD_CONFIGS[i];
+                    const configDiv = document.createElement('div');
+                    configDiv.className = 'config';
+                    configDiv.innerHTML = `<h3>Configuration ${i + 1}: ${config.x}x${config.y} (Total: ${config.x * config.y})</h3>`;
+                    resultsDiv.appendChild(configDiv);
+
+                    // Update status to show current configuration
+                    const statusDiv = document.getElementById('status');
+                    statusDiv.innerHTML = `Matrix Size: ${MATRIX_SIZE}x${MATRIX_SIZE}<br>
+                        Testing Configuration ${i + 1}/${THREAD_CONFIGS.length}: ${config.x}x${config.y}<br>
+                        Running warmup iterations...`;
+
+                    // Warmup runs
+                    configDiv.innerHTML += '<h4>Warmup Runs (5 iterations):</h4>';
+                    let allWarmupsCorrect = true;
+                    let failedWarmup = -1;
+                    let failedCheck = -1;
+                    
+                    for (let warmup = 0; warmup < 5; warmup++) {
+                        statusDiv.innerHTML = `Matrix Size: ${MATRIX_SIZE}x${MATRIX_SIZE}<br>
+                            Testing Configuration ${i + 1}/${THREAD_CONFIGS.length}: ${config.x}x${config.y}<br>
+                            Warmup Run ${warmup + 1}/5...`;
+
+                        const { resultMatrix } = await runConfig(device, { matrixABuffer, matrixBBuffer, matrixCBuffer, stagingBuffer }, config, true);
+                        
+                        // Check all random positions for this warmup run
+                        let warmupCorrect = true;
+                        for (let j = 0; j < NUM_RANDOM_CHECKS; j++) {
+                            const row = Math.floor(Math.random() * MATRIX_SIZE);
+                            const col = Math.floor(Math.random() * MATRIX_SIZE);
+                            const index = row * MATRIX_SIZE + col;
+                            const gpuValue = resultMatrix[index];
+                            const cpuValue = cpuResult[index];
+                            const diff = Math.abs(gpuValue - cpuValue);
+
+                            if (diff >= 0.0001) {
+                                const resultElement = document.createElement('div');
+                                resultElement.className = 'result';
+                                resultElement.innerHTML = `Warmup ${warmup + 1}, Check ${j + 1}: Row=${row}, Col=${col}<br>
+                                    GPU: ${gpuValue.toFixed(6)}<br>
+                                    CPU: ${cpuValue.toFixed(6)}<br>
+                                    Diff: ${diff.toFixed(6)}<br>
+                                    Status: <span class="error">FAIL</span>`;
+                                configDiv.appendChild(resultElement);
+                                warmupCorrect = false;
+                                allWarmupsCorrect = false;
+                                failedWarmup = warmup;
+                                failedCheck = j;
+                                break; // Stop checking this warmup run if we found an error
+                            }
+                        }
+
+                        if (!warmupCorrect) {
+                            break; // Stop warmup runs if we found an error
+                        }
+                    }
+
+                    // Only proceed with performance runs if all warmups passed
+                    if (!allWarmupsCorrect) {
+                        const errorElement = document.createElement('div');
+                        errorElement.className = 'result error';
+                        errorElement.innerHTML = `Skipping performance runs due to verification failure in Warmup ${failedWarmup + 1}, Check ${failedCheck + 1}`;
+                        configDiv.appendChild(errorElement);
+
+                        // Add row to summary table with error status
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${i + 1}</td>
+                            <td>${MATRIX_SIZE}x${MATRIX_SIZE}</td>
+                            <td>${config.x}x${config.y}</td>
+                            <td>N/A</td>
+                            <td>N/A</td>
+                            <td><span class="error">FAILED (Warmup)</span></td>
+                        `;
+                        summaryTable.appendChild(row);
+
+                        // Update status
+                        statusDiv.innerHTML = `Matrix Size: ${MATRIX_SIZE}x${MATRIX_SIZE}<br>
+                            Configuration ${i + 1}/${THREAD_CONFIGS.length}: ${config.x}x${config.y} - Verification Failed<br>
+                            ${i < THREAD_CONFIGS.length - 1 ? 'Moving to next configuration...' : 'All configurations completed!'}`;
+
+                        continue; // Skip to next configuration
+                    }
+
+                    // Performance runs (only if all warmups passed)
+                    configDiv.innerHTML += '<h4>Performance Runs (16 iterations):</h4>';
+                    const executionTimes = [];
+                    const gflopsMeasurements = [];
+                    
+                    for (let iter = 0; iter < 16; iter++) {
+                        statusDiv.innerHTML = `Matrix Size: ${MATRIX_SIZE}x${MATRIX_SIZE}<br>
+                            Testing Configuration ${i + 1}/${THREAD_CONFIGS.length}: ${config.x}x${config.y}<br>
+                            Performance Run ${iter + 1}/16...`;
+
+                        const { executionTime } = await runConfig(device, { matrixABuffer, matrixBBuffer, matrixCBuffer, stagingBuffer }, config);
+                        executionTimes.push(executionTime);
+                        gflopsMeasurements.push(calculateGFLOPs(executionTime));
+                    }
+
+                    // Calculate statistics using all measurements
+                    const timeStats = calculateStats(executionTimes);
+                    const gflopsStats = calculateStats(gflopsMeasurements);
+
+                    // Add performance results
+                    const perfElement = document.createElement('div');
+                    perfElement.className = 'result';
+                    perfElement.innerHTML = `Performance Statistics (all 16 iterations):<br>
+                        Average Time: ${timeStats.mean.toFixed(2)} ms (±${timeStats.stdDev.toFixed(2)} ms)<br>
+                        Average GFLOPs: ${gflopsStats.mean.toFixed(2)} (±${gflopsStats.stdDev.toFixed(2)})<br>
+                        Min Time: ${timeStats.min.toFixed(2)} ms<br>
+                        Max Time: ${timeStats.max.toFixed(2)} ms<br>
+                        Min GFLOPs: ${gflopsStats.min.toFixed(2)}<br>
+                        Max GFLOPs: ${gflopsStats.max.toFixed(2)}`;
+                    configDiv.appendChild(perfElement);
+
+                    // Add row to summary table
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${i + 1}</td>
+                        <td>${MATRIX_SIZE}x${MATRIX_SIZE}</td>
+                        <td>${config.x}x${config.y}</td>
+                        <td>${timeStats.mean.toFixed(2)}</td>
+                        <td>${gflopsStats.mean.toFixed(2)}</td>
+                        <td><span class="success">PASSED</span></td>
+                    `;
+                    summaryTable.appendChild(row);
+
+                    // Update status to show completion of current configuration
+                    statusDiv.innerHTML = `Matrix Size: ${MATRIX_SIZE}x${MATRIX_SIZE}<br>
+                        Completed Configuration ${i + 1}/${THREAD_CONFIGS.length}: ${config.x}x${config.y}<br>
+                        Average Time: ${timeStats.mean.toFixed(2)} ms, GFLOPs: ${gflopsStats.mean.toFixed(2)}<br>
+                        ${i < THREAD_CONFIGS.length - 1 ? 'Moving to next configuration...' : 'All configurations completed!'}`;
+                }
+
+            } catch (error) {
+                document.getElementById('status').innerHTML = `<span class="error">Error: ${error.message}</span>`;
+            }
+        }
+
+        // Run the kernel
+        run();
+    </script>
+</body>
+</html> 
