@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kernel 1vec16 - Vectorized Implementation (16 elements)</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .results {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .error {
+            color: red;
+            font-weight: bold;
+        }
+        .success {
+            color: green;
+        }
+        pre {
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(0,0,0,0.1);
+            border-radius: 50%;
+            border-top-color: #3498db;
+            animation: spin 1s ease-in-out infinite;
+            margin-left: 10px;
+            vertical-align: middle;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .config-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        .config-table th, .config-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        .config-table th {
+            background-color: #f2f2f2;
+        }
+        .config-table tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        .iteration-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            font-size: 0.9em;
+        }
+        .iteration-table th, .iteration-table td {
+            border: 1px solid #ddd;
+            padding: 6px;
+            text-align: left;
+        }
+        .iteration-table th {
+            background-color: #f2f2f2;
+        }
+        .warmup-section, .performance-section {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #eee;
+            border-radius: 4px;
+        }
+        .warmup-section h3, .performance-section h3 {
+            margin-top: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Kernel 1vec16 - Vectorized Implementation (16 elements)</h1>
+        <p>This implementation uses vectorized operations with 16 elements per iteration (4 vec4 operations).</p>
+        
+        <div id="status">Initializing WebGPU...</div>
+        <div id="results" class="results" style="display: none;">
+            <h3>Results:</h3>
+            <div id="result-content"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        // Get matrix size from URL parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const matrixSize = parseInt(urlParams.get('matrixSize')) || 2048;
+        
+        // Define different workgroup configurations to test
+        const WORKGROUP_CONFIGS = [
+            { width: 4, height: 4 },     // 16 threads
+            { width: 8, height: 8 },     // 64 threads
+            { width: 16, height: 16 },   // 256 threads
+            { width: 32, height: 8 },    // 256 threads
+            { width: 8, height: 32 },    // 256 threads
+            { width: 64, height: 4 },    // 256 threads
+            { width: 4, height: 64 },    // 256 threads
+            { width: 256, height: 1 },   // 256 threads
+            { width: 1, height: 256 },   // 256 threads
+            { width: 128, height: 2 },   // 256 threads
+            { width: 2, height: 128 },   // 256 threads
+            { width: 16, height: 4 },    // 64 threads
+            { width: 4, height: 16 },    // 64 threads
+            { width: 32, height: 4 },    // 128 threads
+            { width: 4, height: 32 },    // 128 threads
+            { width: 64, height: 2 },    // 128 threads
+            { width: 2, height: 64 },    // 128 threads
+            { width: 32, height: 2 },    // 64 threads
+            { width: 2, height: 32 }     // 64 threads
+        ];
+        
+        // Number of warmup runs and performance iterations
+        const NUM_WARMUP_RUNS = 5;
+        const NUM_PERFORMANCE_ITERATIONS = 50;
+        
+        // CPU reference implementation for verification
+        function matrixMultiplyCPU(A, B, n) {
+            const C = new Float32Array(n * n);
+            for (let i = 0; i < n; i++) {
+                for (let j = 0; j < n; j++) {
+                    let sum = 0;
+                    for (let k = 0; k < n; k++) {
+                        sum += A[i * n + k] * B[k * n + j];
+                    }
+                    C[i * n + j] = sum;
+                }
+            }
+            return C;
+        }
+        
+        // Generate random matrices
+        function generateRandomMatrix(size) {
+            const matrix = new Float32Array(size * size);
+            for (let i = 0; i < matrix.length; i++) {
+                matrix[i] = Math.random() * 2 - 1; // Random values between -1 and 1
+            }
+            return matrix;
+        }
+        
+        // Verify GPU result against CPU reference
+        function verifyResults(gpuResult, cpuResult, tolerance = 0.01) {
+            let maxDiff = 0;
+            let allCorrect = true;
+            let maxDiffIndex = 0;
+            let maxDiffCpuValue = 0;
+            let maxDiffGpuValue = 0;
+            
+            for (let i = 0; i < gpuResult.length; i++) {
+                const diff = Math.abs(gpuResult[i] - cpuResult[i]);
+                if (diff > maxDiff) {
+                    maxDiff = diff;
+                    maxDiffIndex = i;
+                    maxDiffCpuValue = cpuResult[i];
+                    maxDiffGpuValue = gpuResult[i];
+                }
+                if (diff > tolerance) {
+                    allCorrect = false;
+                }
+            }
+            
+            if (maxDiff === 0) {
+                maxDiffIndex = 0;
+                maxDiffCpuValue = cpuResult[0];
+                maxDiffGpuValue = gpuResult[0];
+            }
+            
+            return { 
+                allCorrect, 
+                maxDiff,
+                maxDiffIndex,
+                maxDiffCpuValue,
+                maxDiffGpuValue
+            };
+        }
+        
+        async function initWebGPU() {
+            if (!navigator.gpu) {
+                throw new Error("WebGPU not supported on this browser");
+            }
+            
+            const adapter = await navigator.gpu.requestAdapter();
+            if (!adapter) {
+                throw new Error("No appropriate GPUAdapter found");
+            }
+
+            const adapterLimits = adapter.limits;
+            
+            const device = await adapter.requestDevice({
+                requiredLimits: {
+                    maxComputeInvocationsPerWorkgroup: 1024,
+                    maxComputeWorkgroupSizeX: 1024,
+                    maxComputeWorkgroupSizeY: 1024
+                }
+            });
+            
+            return { device, limits: device.limits };
+        }
+        
+        async function runMatrixMultiplication(device, size, matrixA, matrixB, workgroupConfig) {
+            const threadCount = workgroupConfig.width * workgroupConfig.height;
+            if (threadCount > device.limits.maxComputeInvocationsPerWorkgroup) {
+                throw new Error(`Workgroup size ${workgroupConfig.width}x${workgroupConfig.height} (${threadCount} threads) exceeds device limit of ${device.limits.maxComputeInvocationsPerWorkgroup} threads`);
+            }
+
+            const shaderModule = device.createShaderModule({
+                code: `
+                    @group(0) @binding(0) var<storage, read> a: array<f32>;
+                    @group(0) @binding(1) var<storage, read> b: array<f32>;
+                    @group(0) @binding(2) var<storage, read_write> c: array<f32>;
+                    
+                    @compute @workgroup_size(${workgroupConfig.width}, ${workgroupConfig.height})
+                    fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+                        let row = global_id.y;
+                        let col = global_id.x;
+                        
+                        if (row >= ${size}u || col >= ${size}u) {
+                            return;
+                        }
+                        
+                        var sum = 0.0;
+                        
+                        // Process 16 elements at a time (4 vec4 operations)
+                        for (var k = 0u; k < ${size}u - 15u; k += 16u) {
+                            // First vec4
+                            let a_val1 = vec4<f32>(
+                                a[row * ${size}u + k],
+                                a[row * ${size}u + k + 1u],
+                                a[row * ${size}u + k + 2u],
+                                a[row * ${size}u + k + 3u]
+                            );
+                            let b_val1 = vec4<f32>(
+                                b[k * ${size}u + col],
+                                b[(k + 1u) * ${size}u + col],
+                                b[(k + 2u) * ${size}u + col],
+                                b[(k + 3u) * ${size}u + col]
+                            );
+                            sum += dot(a_val1, b_val1);
+                            
+                            // Second vec4
+                            let a_val2 = vec4<f32>(
+                                a[row * ${size}u + k + 4u],
+                                a[row * ${size}u + k + 5u],
+                                a[row * ${size}u + k + 6u],
+                                a[row * ${size}u + k + 7u]
+                            );
+                            let b_val2 = vec4<f32>(
+                                b[(k + 4u) * ${size}u + col],
+                                b[(k + 5u) * ${size}u + col],
+                                b[(k + 6u) * ${size}u + col],
+                                b[(k + 7u) * ${size}u + col]
+                            );
+                            sum += dot(a_val2, b_val2);
+                            
+                            // Third vec4
+                            let a_val3 = vec4<f32>(
+                                a[row * ${size}u + k + 8u],
+                                a[row * ${size}u + k + 9u],
+                                a[row * ${size}u + k + 10u],
+                                a[row * ${size}u + k + 11u]
+                            );
+                            let b_val3 = vec4<f32>(
+                                b[(k + 8u) * ${size}u + col],
+                                b[(k + 9u) * ${size}u + col],
+                                b[(k + 10u) * ${size}u + col],
+                                b[(k + 11u) * ${size}u + col]
+                            );
+                            sum += dot(a_val3, b_val3);
+                            
+                            // Fourth vec4
+                            let a_val4 = vec4<f32>(
+                                a[row * ${size}u + k + 12u],
+                                a[row * ${size}u + k + 13u],
+                                a[row * ${size}u + k + 14u],
+                                a[row * ${size}u + k + 15u]
+                            );
+                            let b_val4 = vec4<f32>(
+                                b[(k + 12u) * ${size}u + col],
+                                b[(k + 13u) * ${size}u + col],
+                                b[(k + 14u) * ${size}u + col],
+                                b[(k + 15u) * ${size}u + col]
+                            );
+                            sum += dot(a_val4, b_val4);
+                        }
+                        
+                        // Handle remaining elements in groups of 4
+                        for (var k = ${size}u - (${size}u % 16u); k < ${size}u - (${size}u % 4u); k += 4u) {
+                            let a_val = vec4<f32>(
+                                a[row * ${size}u + k],
+                                a[row * ${size}u + k + 1u],
+                                a[row * ${size}u + k + 2u],
+                                a[row * ${size}u + k + 3u]
+                            );
+                            let b_val = vec4<f32>(
+                                b[k * ${size}u + col],
+                                b[(k + 1u) * ${size}u + col],
+                                b[(k + 2u) * ${size}u + col],
+                                b[(k + 3u) * ${size}u + col]
+                            );
+                            sum += dot(a_val, b_val);
+                        }
+                        
+                        // Handle final 0-3 elements
+                        for (var k = ${size}u - (${size}u % 4u); k < ${size}u; k++) {
+                            sum += a[row * ${size}u + k] * b[k * ${size}u + col];
+                        }
+                        
+                        // Store the result
+                        c[row * ${size}u + col] = sum;
+                    }
+                `
+            });
+            
+            // Create buffers
+            const bufferSize = size * size * 4;
+            const aBuffer = device.createBuffer({
+                size: bufferSize,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+            });
+            const bBuffer = device.createBuffer({
+                size: bufferSize,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+            });
+            const cBuffer = device.createBuffer({
+                size: bufferSize,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+            });
+            
+            const stagingBuffer = device.createBuffer({
+                size: bufferSize,
+                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+            });
+            
+            device.queue.writeBuffer(aBuffer, 0, matrixA);
+            device.queue.writeBuffer(bBuffer, 0, matrixB);
+            
+            const bindGroupLayout = device.createBindGroupLayout({
+                entries: [
+                    { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+                    { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+                    { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } }
+                ]
+            });
+            
+            const pipelineLayout = device.createPipelineLayout({
+                bindGroupLayouts: [bindGroupLayout]
+            });
+            
+            const pipeline = device.createComputePipeline({
+                layout: pipelineLayout,
+                compute: {
+                    module: shaderModule,
+                    entryPoint: "main"
+                }
+            });
+            
+            const bindGroup = device.createBindGroup({
+                layout: bindGroupLayout,
+                entries: [
+                    { binding: 0, resource: { buffer: aBuffer } },
+                    { binding: 1, resource: { buffer: bBuffer } },
+                    { binding: 2, resource: { buffer: cBuffer } }
+                ]
+            });
+            
+            const commandEncoder = device.createCommandEncoder();
+            const computePass = commandEncoder.beginComputePass();
+            computePass.setPipeline(pipeline);
+            computePass.setBindGroup(0, bindGroup);
+
+            const startTime = performance.now();
+
+            computePass.dispatchWorkgroups(
+                Math.ceil(size / workgroupConfig.width),
+                Math.ceil(size / workgroupConfig.height)
+            );
+            computePass.end();
+
+            commandEncoder.copyBufferToBuffer(cBuffer, 0, stagingBuffer, 0, size * size * 4);
+
+            const fence = device.queue.submit([commandEncoder.finish()]);
+            await device.queue.onSubmittedWorkDone();
+
+            const endTime = performance.now();
+            const executionTime = endTime - startTime;
+
+            await stagingBuffer.mapAsync(GPUMapMode.READ);
+            const resultArray = new Float32Array(stagingBuffer.getMappedRange());
+
+            stagingBuffer.unmap();
+
+            return {
+                resultArray,
+                executionTime
+            };
+        }
+        
+        async function main() {
+            const statusElement = document.getElementById('status');
+            const resultsElement = document.getElementById('results');
+            const resultContent = document.getElementById('result-content');
+            
+            try {
+                statusElement.textContent = "Initializing WebGPU...";
+                const { device, limits } = await initWebGPU();
+                
+                statusElement.textContent = `Device initialized with max workgroup invocations: ${limits.maxComputeInvocationsPerWorkgroup}`;
+                
+                statusElement.textContent = `Generating random matrices (${matrixSize}x${matrixSize})...`;
+                const matrixA = generateRandomMatrix(matrixSize);
+                const matrixB = generateRandomMatrix(matrixSize);
+                
+                statusElement.textContent = "Computing CPU reference result...";
+                const cpuResult = matrixMultiplyCPU(matrixA, matrixB, matrixSize);
+                
+                const configResults = [];
+                
+                for (const config of WORKGROUP_CONFIGS) {
+                    try {
+                        statusElement.textContent = `Testing workgroup size ${config.width}x${config.height}...`;
+                        
+                        const threadCount = config.width * config.height;
+                        if (threadCount > limits.maxComputeInvocationsPerWorkgroup) {
+                            console.warn(`Skipping configuration ${config.width}x${config.height} (${threadCount} threads) - exceeds device limit`);
+                            continue;
+                        }
+                        
+                        const warmupResults = [];
+                        let allWarmupsPassed = true;
+                        
+                        console.log(`Running warmup iterations for ${config.width}x${config.height}...`);
+                        for (let i = 0; i < NUM_WARMUP_RUNS; i++) {
+                            const { resultArray, executionTime } = await runMatrixMultiplication(device, matrixSize, matrixA, matrixB, config);
+                            const { allCorrect, maxDiff, maxDiffIndex, maxDiffCpuValue, maxDiffGpuValue } = verifyResults(resultArray, cpuResult);
+                            
+                            const numOperations = 2 * matrixSize * matrixSize * matrixSize;
+                            const gflops = (numOperations / executionTime) / 1e6;
+                            
+                            warmupResults.push({
+                                iteration: i + 1,
+                                time: executionTime,
+                                gflops: gflops,
+                                verified: allCorrect,
+                                maxDiff: maxDiff,
+                                maxDiffIndex: maxDiffIndex,
+                                maxDiffCpuValue: maxDiffCpuValue,
+                                maxDiffGpuValue: maxDiffGpuValue
+                            });
+                            
+                            if (!allCorrect) {
+                                allWarmupsPassed = false;
+                                console.warn(`Warmup ${i + 1} failed verification for ${config.width}x${config.height}`);
+                            }
+                        }
+                        
+                        const performanceResults = [];
+                        let totalTime = 0;
+                        let totalGflops = 0;
+                        
+                        console.log(`Running performance iterations for ${config.width}x${config.height}...`);
+                        for (let i = 0; i < NUM_PERFORMANCE_ITERATIONS; i++) {
+                            const { resultArray, executionTime } = await runMatrixMultiplication(device, matrixSize, matrixA, matrixB, config);
+                            const { allCorrect, maxDiff, maxDiffIndex, maxDiffCpuValue, maxDiffGpuValue } = verifyResults(resultArray, cpuResult);
+                            
+                            const numOperations = 2 * matrixSize * matrixSize * matrixSize;
+                            const gflops = (numOperations / executionTime) / 1e6;
+                            
+                            totalTime += executionTime;
+                            totalGflops += gflops;
+                            
+                            performanceResults.push({
+                                iteration: i + 1,
+                                time: executionTime,
+                                gflops: gflops,
+                                verified: allCorrect,
+                                maxDiff: maxDiff,
+                                maxDiffIndex: maxDiffIndex,
+                                maxDiffCpuValue: maxDiffCpuValue,
+                                maxDiffGpuValue: maxDiffGpuValue
+                            });
+                        }
+                        
+                        const avgTime = totalTime / NUM_PERFORMANCE_ITERATIONS;
+                        const avgGflops = totalGflops / NUM_PERFORMANCE_ITERATIONS;
+                        
+                        console.log(`Configuration ${config.width}x${config.height} completed with avg time: ${avgTime.toFixed(2)}ms, GFLOPs: ${avgGflops.toFixed(2)}`);
+                        
+                        configResults.push({
+                            config: `${config.width}x${config.height}`,
+                            threads: config.width * config.height,
+                            avgTime,
+                            gflops: avgGflops,
+                            warmupResults,
+                            performanceResults,
+                            allWarmupsPassed
+                        });
+                    } catch (error) {
+                        console.error(`Error testing configuration ${config.width}x${config.height}:`, error);
+                        configResults.push({
+                            config: `${config.width}x${config.height}`,
+                            threads: config.width * config.height,
+                            failed: true,
+                            error: error.message
+                        });
+                    }
+                }
+                
+                const validConfigs = configResults.filter(config => !config.failed);
+                if (validConfigs.length === 0) {
+                    throw new Error("No valid configurations were successfully tested");
+                }
+                
+                const bestConfig = validConfigs.reduce((best, current) => 
+                    current.gflops > best.gflops ? current : best, validConfigs[0]
+                );
+                
+                window.parent.postMessage({
+                    type: 'kernel-result',
+                    result: {
+                        kernelId: 1,
+                        matrixSize: matrixSize,
+                        avgTime: bestConfig.avgTime,
+                        gflops: bestConfig.gflops,
+                        bestConfig: bestConfig,
+                        configurations: validConfigs.map(config => ({
+                            config: config.config,
+                            threads: config.threads,
+                            time: config.avgTime,
+                            gflops: config.gflops,
+                            warmupResults: config.warmupResults,
+                            performanceResults: config.performanceResults,
+                            allWarmupsPassed: config.allWarmupsPassed
+                        })),
+                        numWarmupRuns: NUM_WARMUP_RUNS,
+                        numPerformanceIterations: NUM_PERFORMANCE_ITERATIONS,
+                        allWarmupsPassed: validConfigs.every(config => config.allWarmupsPassed),
+                        displayHtml: `
+                            <h3>Kernel 1vec16 Results</h3>
+                            <p><span class="metric">Matrix Size:</span> <span class="value">${matrixSize} x ${matrixSize}</span></p>
+                            
+                            <h4>Configuration Summary</h4>
+                            <table class="config-table">
+                                <thead>
+                                    <tr>
+                                        <th>Configuration</th>
+                                        <th>Threads</th>
+                                        <th>Average Time (ms)</th>
+                                        <th>GFLOPs</th>
+                                        <th>Warmups Passed</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${validConfigs.map(config => {
+                                        const isBest = config.config === bestConfig.config;
+                                        return `
+                                            <tr${isBest ? ' style="font-weight: bold; background-color: #e6ffe6;"' : ''}>
+                                                <td>Workgroup size (${config.config})${isBest ? ' (Best)' : ''}</td>
+                                                <td>${config.threads}</td>
+                                                <td>${config.avgTime.toFixed(2)}</td>
+                                                <td>${config.gflops.toFixed(2)}</td>
+                                                <td><span class="${config.allWarmupsPassed ? 'success' : 'error'}">${config.allWarmupsPassed ? 'Yes' : 'No'}</span></td>
+                                            </tr>
+                                        `;
+                                    }).join('')}
+                                </tbody>
+                            </table>
+                            
+                            <h4>Best Configuration: Workgroup size (${bestConfig.config})</h4>
+                            
+                            ${validConfigs.map(config => `
+                                <div class="configuration-section" style="${config.config === bestConfig.config ? 'border: 2px solid #4CAF50; padding: 10px; margin: 20px 0;' : 'border: 1px solid #ccc; padding: 10px; margin: 20px 0;'}">
+                                    <h3>Workgroup size (${config.config})${config.config === bestConfig.config ? ' (Best)' : ''}</h3>
+                                    
+                                    <h4>Warmup Runs (${NUM_WARMUP_RUNS})</h4>
+                                    <p>All warmups passed verification: <span class="${config.allWarmupsPassed ? 'success' : 'error'}">${config.allWarmupsPassed ? 'Yes' : 'No'}</span></p>
+                                    <table class="iteration-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Iteration</th>
+                                                <th>Time (ms)</th>
+                                                <th>GFLOPs</th>
+                                                <th>Verified</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${config.warmupResults.map((result, idx) => `
+                                                <tr>
+                                                    <td>${idx + 1}</td>
+                                                    <td>${result.time.toFixed(2)}</td>
+                                                    <td>${result.gflops.toFixed(2)}</td>
+                                                    <td><span class="${result.verified ? 'success' : 'error'}">${result.verified ? 'Yes' : 'No'}</span></td>
+                                                </tr>
+                                            `).join('')}
+                                        </tbody>
+                                    </table>
+                                    
+                                    <h4>Performance Iterations (${NUM_PERFORMANCE_ITERATIONS})</h4>
+                                    <table class="iteration-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Iteration</th>
+                                                <th>Time (ms)</th>
+                                                <th>GFLOPs</th>
+                                                <th>Verified</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${config.performanceResults.map((result, idx) => `
+                                                <tr>
+                                                    <td>${idx + 1}</td>
+                                                    <td>${result.time.toFixed(2)}</td>
+                                                    <td>${result.gflops.toFixed(2)}</td>
+                                                    <td><span class="${result.verified ? 'success' : 'error'}">${result.verified ? 'Yes' : 'No'}</span></td>
+                                                </tr>
+                                            `).join('')}
+                                            <tr class="average-row">
+                                                <td>Average</td>
+                                                <td>${config.avgTime.toFixed(2)}</td>
+                                                <td>${config.gflops.toFixed(2)}</td>
+                                                <td>-</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            `).join('')}
+                        `
+                    }
+                }, '*');
+                
+                resultsElement.style.display = 'block';
+                
+                let summaryHtml = `
+                    <h3>Summary</h3>
+                    <p>Matrix Size: ${matrixSize}x${matrixSize}</p>
+                    <p>Best Configuration: Workgroup size (${bestConfig.config})</p>
+                    <p>Best Average Time: ${bestConfig.avgTime.toFixed(2)} ms</p>
+                    <p>Best GFLOPs: ${bestConfig.gflops.toFixed(2)}</p>
+                    <table class="config-table">
+                        <thead>
+                            <tr>
+                                <th>Configuration</th>
+                                <th>Threads</th>
+                                <th>Average Time (ms)</th>
+                                <th>Average GFLOPs</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+                
+                const sortedConfigs = [...validConfigs].sort((a, b) => b.gflops - a.gflops);
+                
+                configResults.forEach(config => {
+                    const isBest = config.config === bestConfig.config;
+                    summaryHtml += `
+                        <tr${isBest ? ' style="font-weight: bold; background-color: #e6ffe6;"' : ''}>
+                            <td>Workgroup size (${config.config})</td>
+                            <td>${config.threads}</td>
+                            <td>${config.failed ? '-' : config.avgTime.toFixed(2)}</td>
+                            <td>${config.failed ? '-' : config.gflops.toFixed(2)}</td>
+                            <td>${config.failed ? `<span class="error">Failed: ${config.error}</span>` : '<span class="success">Success</span>'}</td>
+                        </tr>
+                    `;
+                });
+                
+                summaryHtml += `
+                        </tbody>
+                    </table>
+                `;
+                
+                let detailedResultsHtml = '';
+                
+                sortedConfigs.forEach((config, index) => {
+                    const isBest = config.config === bestConfig.config;
+                    detailedResultsHtml += `
+                        <div class="configuration-section" style="${isBest ? 'border: 2px solid #4CAF50; padding: 10px; margin: 10px 0;' : 'border: 1px solid #ccc; padding: 10px; margin: 10px 0;'}">
+                            <h3>Configuration ${index + 1}: Workgroup size (${config.config}) ${isBest ? '(Best Performance)' : ''}</h3>
+                            
+                            <div class="warmup-section">
+                                <h4>Warmup Runs (${NUM_WARMUP_RUNS})</h4>
+                                <p>All warmups passed verification: <span class="${config.allWarmupsPassed ? 'success' : 'error'}">${config.allWarmupsPassed ? 'Yes' : 'No'}</span></p>
+                                <table class="iteration-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Iteration</th>
+                                            <th>Time (ms)</th>
+                                            <th>GFLOPs</th>
+                                            <th>Verified</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                    `;
+                    
+                    config.warmupResults.forEach(result => {
+                        detailedResultsHtml += `
+                            <tr>
+                                <td>${result.iteration}</td>
+                                <td>${result.time.toFixed(2)}</td>
+                                <td>${result.gflops.toFixed(2)}</td>
+                                <td><span class="${result.verified ? 'success' : 'error'}">${result.verified ? 'Yes' : 'No'}</span></td>
+                            </tr>
+                        `;
+                    });
+                    
+                    const avgWarmupTime = config.warmupResults.reduce((sum, r) => sum + r.time, 0) / NUM_WARMUP_RUNS;
+                    const avgWarmupGflops = config.warmupResults.reduce((sum, r) => sum + r.gflops, 0) / NUM_WARMUP_RUNS;
+                    
+                    detailedResultsHtml += `
+                            <tr style="font-weight: bold; background-color: #f0f0f0;">
+                                <td>Warmup Average</td>
+                                <td>${avgWarmupTime.toFixed(2)}</td>
+                                <td>${avgWarmupGflops.toFixed(2)}</td>
+                                <td>-</td>
+                            </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                            
+                    <div class="performance-section">
+                        <h4>Performance Runs (${NUM_PERFORMANCE_ITERATIONS})</h4>
+                        <table class="iteration-table">
+                            <thead>
+                                <tr>
+                                    <th>Iteration</th>
+                                    <th>Time (ms)</th>
+                                    <th>GFLOPs</th>
+                                    <th>Verified</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                    `;
+                    
+                    config.performanceResults.forEach(result => {
+                        detailedResultsHtml += `
+                            <tr>
+                                <td>${result.iteration}</td>
+                                <td>${result.time.toFixed(2)}</td>
+                                <td>${result.gflops.toFixed(2)}</td>
+                                <td><span class="${result.verified ? 'success' : 'error'}">${result.verified ? 'Yes' : 'No'}</span></td>
+                            </tr>
+                        `;
+                    });
+                    
+                    const avgPerformanceTime = config.performanceResults.reduce((sum, r) => sum + r.time, 0) / NUM_PERFORMANCE_ITERATIONS;
+                    const avgPerformanceGflops = config.performanceResults.reduce((sum, r) => sum + r.gflops, 0) / NUM_PERFORMANCE_ITERATIONS;
+                    
+                    detailedResultsHtml += `
+                            <tr style="font-weight: bold; background-color: #f0f0f0;">
+                                <td>Performance Average</td>
+                                <td>${avgPerformanceTime.toFixed(2)}</td>
+                                <td>${avgPerformanceGflops.toFixed(2)}</td>
+                                <td>-</td>
+                            </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                    `;
+                });
+                
+                resultContent.innerHTML = summaryHtml + detailedResultsHtml;
+                
+                statusElement.textContent = "Matrix multiplication completed successfully!";
+                statusElement.className = "success";
+                
+            } catch (error) {
+                statusElement.textContent = `Error: ${error.message}`;
+                statusElement.className = "error";
+                console.error(error);
+            }
+        }
+        
+        main();
+    </script>
+</body>
+</html> 
